@@ -4,6 +4,20 @@ import { RecipientCatchManager, type RecipientCatchRuleView } from "./email-send
 
 export const dynamic = "force-dynamic";
 
+interface RecipientRuleRecord {
+  id: string;
+  email: string;
+  label: string;
+  category: string;
+  enabled: boolean;
+  priority: number;
+  requireAttachment: boolean;
+  subjectKeywords: string[];
+  bodyKeywords: string[];
+  attachmentKeywords: string[];
+  matchedToday: number;
+}
+
 function toCategory(value: string): RecipientCatchRuleView["category"] {
   if (
     value === "spaj" ||
@@ -30,8 +44,21 @@ async function getRecipientRules(): Promise<{
   error?: string;
 }> {
   try {
-    const rules = await prisma.recipientCatchRule.findMany({
+    const rules: RecipientRuleRecord[] = await prisma.recipientCatchRule.findMany({
       orderBy: [{ enabled: "desc" }, { updatedAt: "desc" }],
+      select: {
+        id: true,
+        email: true,
+        label: true,
+        category: true,
+        enabled: true,
+        priority: true,
+        requireAttachment: true,
+        subjectKeywords: true,
+        bodyKeywords: true,
+        attachmentKeywords: true,
+        matchedToday: true,
+      },
     });
 
     return {
