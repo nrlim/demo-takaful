@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import type { InputJsonValue } from "@prisma/client/runtime/client";
 import { apiError, validateBearerToken } from "@/lib/api-auth";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
@@ -44,7 +44,7 @@ export async function POST(request: Request): Promise<Response> {
         providerJobId,
         providerStatus: snaptextJob.status,
         status: mappedStatus,
-        response: snaptextJob as Prisma.InputJsonValue,
+        response: snaptextJob as InputJsonValue,
       },
     });
 
