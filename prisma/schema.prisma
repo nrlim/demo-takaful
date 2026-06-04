@@ -1,0 +1,140 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum MailConnectionStatus {
+  DISCONNECTED
+  CONNECTED
+  ERROR
+}
+
+enum MessageOcrStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model IntegrationConfiguration {
+  id          String   @id @default(cuid())
+  provider    String   @unique
+  apiKey      String
+  endpoint    String
+  enabled     Boolean  @default(true)
+  lastTestAt  DateTime?
+  lastError   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([enabled])
+}
+
+model OcrJob {
+  id             String           @id @default(cuid())
+  provider       String
+  providerJobId  String?
+  emailMessageId String?
+  pdfUrl         String
+  filename       String
+  fileSize       Int
+  fileHash       String
+  status         MessageOcrStatus @default(PROCESSING)
+  providerStatus String?
+  errorMessage   String?
+  response       Json?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([emailMessageId])
+  @@index([status, createdAt])
+}
+
+model MailServerConnection {
+  id          String               @id @default(cuid())
+  name        String
+  host        String
+  port        Int
+  username    String
+  password    String
+  mailbox     String               @default("INBOX")
+  secure      Boolean              @default(true)
+  status      MailConnectionStatus @default(DISCONNECTED)
+  lastError   String?
+  lastSyncAt  DateTime?
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+  messages    EmailMessage[]
+
+  @@index([status])
+  @@index([updatedAt])
+}
+
+model RecipientCatchRule {
+  id                 String   @id @default(cuid())
+  email              String   @unique
+  label              String
+  category           String
+  enabled            Boolean  @default(true)
+  priority           Int      @default(10)
+  requireAttachment  Boolean  @default(true)
+  subjectKeywords    String[] @default([])
+  bodyKeywords       String[] @default([])
+  attachmentKeywords String[] @default([])
+  matchedToday       Int      @default(0)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([enabled, priority])
+  @@index([category])
+}
+
+model EmailAttachment {
+  id             String       @id @default(cuid())
+  emailMessageId String
+  filename       String
+  contentType    String
+  fileSize       Int
+  fileHash       String
+  storagePath    String
+  publicUrl      String
+  createdAt      DateTime     @default(now())
+  message        EmailMessage @relation(fields: [emailMessageId], references: [id], onDelete: Cascade)
+
+  @@unique([emailMessageId, fileHash])
+  @@index([fileHash])
+}
+
+model EmailMessage {
+  id             String               @id @default(cuid())
+  connectionId   String
+  messageUid     Int
+  messageId      String?
+  fromEmail      String
+  toEmail        String
+  subject        String
+  bodyPreview    String?
+  receivedAt     DateTime
+  hasAttachments Boolean              @default(false)
+  attachmentCount Int                 @default(0)
+  attachmentNames String[]            @default([])
+  matchedRuleId  String?
+  matchedCategory String?
+  matchReason    String?
+  ocrJobId       String?
+  ocr            Boolean              @default(false)
+  ocrStatus      MessageOcrStatus     @default(PENDING)
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  connection     MailServerConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  attachments    EmailAttachment[]
+
+  @@unique([connectionId, messageUid])
+  @@index([ocr, receivedAt])
+  @@index([connectionId, receivedAt])
+  @@index([fromEmail])
+  @@index([toEmail])
+}
