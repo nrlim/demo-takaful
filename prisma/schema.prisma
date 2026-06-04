@@ -46,6 +46,8 @@ model OcrJob {
   providerStatus String?
   errorMessage   String?
   response       Json?
+  result         Json?
+  resultReceivedAt DateTime?
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
 

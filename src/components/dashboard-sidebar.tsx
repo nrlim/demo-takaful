@@ -9,6 +9,7 @@ import {
   LogOut,
   MailCheck,
   MessagesSquare,
+  FileSearch,
   PanelLeftClose,
   PanelLeftOpen,
   Server,
@@ -35,6 +36,12 @@ const menuItems = [
     label: "Messages",
     description: "OCR false queue",
     icon: MessagesSquare,
+  },
+  {
+    href: "/dashboard/ocr-results",
+    label: "OCR Results",
+    description: "Rendered JSON",
+    icon: FileSearch,
   },
   {
     href: "/dashboard/catch-rules",

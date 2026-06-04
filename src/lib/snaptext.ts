@@ -1,3 +1,4 @@
+import { takafulApplicationOcrSchema } from "@/lib/ocr-schema";
 import { prisma } from "@/lib/prisma";
 import { decryptSecret } from "@/lib/secret-crypto";
 import type { SnaptextOcrJobInput } from "@/lib/validations/ocr-job";
@@ -50,6 +51,7 @@ export async function createSnaptextOcrJob(
       filename: input.filename,
       fileSize: input.fileSize,
       fileHash: input.fileHash,
+      schema: takafulApplicationOcrSchema,
     }),
   });
 
