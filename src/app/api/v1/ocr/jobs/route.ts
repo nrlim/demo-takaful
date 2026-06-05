@@ -31,7 +31,7 @@ export async function POST(request: Request): Promise<Response> {
   });
 
   try {
-    const snaptextJob = await createSnaptextOcrJob(parsed.data);
+    const snaptextJob = await createSnaptextOcrJob({ ...parsed.data, ocrJobId: createdJob.id });
     const mappedStatus = mapProviderStatus(snaptextJob.status);
     const providerJobId = typeof snaptextJob.id === "string"
       ? snaptextJob.id

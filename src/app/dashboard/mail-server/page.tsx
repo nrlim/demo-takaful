@@ -1,6 +1,8 @@
-import { Database, Inbox, RefreshCw, Server, Unplug } from "lucide-react";
+import Link from "next/link";
+import { Database, Inbox, RefreshCw, Pencil, Server, TerminalSquare, Unplug } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { disconnectMailServerAction, syncMailMessagesAction } from "./actions";
+import { LogsAutoRefresh } from "./logs-auto-refresh";
 import { MailServerForm } from "./mail-server-form";
 
 export const dynamic = "force-dynamic";
@@ -25,22 +27,47 @@ async function getConnections(): Promise<{
     username: string;
     mailbox: string;
     secure: boolean;
+    onlyUnread: boolean;
     status: string;
     lastError: string | null;
     lastSyncAt: Date | null;
     messageCount: number;
   }>;
+  logs: Array<{
+    id: string;
+    connectionId: string | null;
+    level: string;
+    event: string;
+    message: string;
+    createdAt: Date;
+    metadata: unknown;
+  }>;
   error?: string;
 }> {
   try {
-    const connections = await prisma.mailServerConnection.findMany({
-      orderBy: { updatedAt: "desc" },
-      include: {
-        _count: {
-          select: { messages: true },
+    const [connections, logs] = await Promise.all([
+      prisma.mailServerConnection.findMany({
+        orderBy: { updatedAt: "desc" },
+        include: {
+          _count: {
+            select: { messages: true },
+          },
         },
-      },
-    });
+      }),
+      prisma.emailGatewayLog.findMany({
+        orderBy: { createdAt: "desc" },
+        take: 60,
+        select: {
+          id: true,
+          connectionId: true,
+          level: true,
+          event: true,
+          message: true,
+          createdAt: true,
+          metadata: true,
+        },
+      }),
+    ]);
 
     return {
       connections: connections.map((connection) => ({
@@ -51,22 +78,25 @@ async function getConnections(): Promise<{
         username: connection.username,
         mailbox: connection.mailbox,
         secure: connection.secure,
+        onlyUnread: connection.onlyUnread,
         status: connection.status,
         lastError: connection.lastError,
         lastSyncAt: connection.lastSyncAt,
         messageCount: connection._count.messages,
       })),
+      logs,
     };
   } catch {
     return {
       connections: [],
+      logs: [],
       error: "Database belum siap. Tambahkan DATABASE_URL dan DIRECT_URL, lalu jalankan prisma migrate.",
     };
   }
 }
 
 export default async function MailServerPage(): Promise<React.JSX.Element> {
-  const { connections, error } = await getConnections();
+  const { connections, logs, error } = await getConnections();
 
   return (
     <div className="flex flex-col gap-8">
@@ -115,6 +145,7 @@ export default async function MailServerPage(): Promise<React.JSX.Element> {
                   </div>
                   <p className="mt-1 break-words text-sm text-slate-600">{connection.host}:{connection.port} / {connection.mailbox}</p>
                   <p className="mt-1 break-words text-xs text-slate-500">{connection.username}</p>
+                  <p className="mt-1 text-xs font-medium text-slate-500">Mode: {connection.onlyUnread ? "Unread only" : "Latest messages"}</p>
                 </div>
                 <div>
                   <p className="text-sm font-medium text-slate-800">Last sync</p>
@@ -127,7 +158,11 @@ export default async function MailServerPage(): Promise<React.JSX.Element> {
                   </span>
                   <p className="mt-2 text-xs text-slate-500">{connection.messageCount} messages</p>
                 </div>
-                <div className="flex gap-2 lg:justify-end">
+                <div className="flex flex-wrap gap-2 lg:justify-end">
+                  <Link href={`/dashboard/mail-server/${connection.id}/edit`} className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-300 px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-200">
+                    <Pencil className="size-3.5" aria-hidden />
+                    Edit
+                  </Link>
                   <form action={syncMailMessagesAction}>
                     <input type="hidden" name="connectionId" value={connection.id} />
                     <button type="submit" className="inline-flex h-9 items-center gap-2 rounded-md bg-sky-800 px-3 text-xs font-semibold text-white transition hover:bg-sky-900 focus:outline-none focus:ring-2 focus:ring-sky-200">
@@ -145,6 +180,47 @@ export default async function MailServerPage(): Promise<React.JSX.Element> {
                 </div>
               </article>
             ))
+          )}
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex flex-col gap-4 border-b border-slate-200 p-5 md:flex-row md:items-start md:justify-between">
+          <div className="flex items-start gap-3">
+            <TerminalSquare className="mt-0.5 size-5 text-slate-500" aria-hidden />
+            <div>
+              <h2 className="text-lg font-semibold text-slate-950">Email Gateway Logs</h2>
+              <p className="mt-1 text-sm leading-6 text-slate-600">
+                Progress IMAP sync dari connect, fetch unseen message, rule matching, upload PDF, sampai message tersimpan ke queue.
+              </p>
+            </div>
+          </div>
+          <LogsAutoRefresh />
+        </div>
+        <div className="max-h-[520px] overflow-y-auto bg-slate-50 p-4 font-mono text-xs">
+          {logs.length === 0 ? (
+            <p className="text-slate-500">No gateway logs yet. Connect mail server or run Sync inbox to start logging.</p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {logs.map((log) => (
+                <div key={log.id} className="rounded-md border border-slate-200 bg-white px-3 py-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-slate-500">[{formatDate(log.createdAt)}]</span>
+                    <span className={log.level === "ERROR" ? "text-red-700" : log.level === "WARN" ? "text-amber-700" : log.level === "OK" ? "text-emerald-700" : log.level === "MATCH" ? "text-indigo-700" : "text-sky-700"}>
+                      {log.level}
+                    </span>
+                    <span className="text-slate-700">{log.event}</span>
+                  </div>
+                  <p className="mt-1 leading-5 text-slate-900">{log.message}</p>
+                  {log.connectionId ? <p className="mt-1 text-slate-500">connection: {log.connectionId}</p> : null}
+                  {log.metadata ? (
+                    <pre className="mt-2 overflow-x-auto rounded border border-slate-200 bg-slate-50 p-2 text-[11px] leading-5 text-slate-600">
+                      {JSON.stringify(log.metadata, null, 2)}
+                    </pre>
+                  ) : null}
+                </div>
+              ))}
+            </div>
           )}
         </div>
       </section>

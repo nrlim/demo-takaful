@@ -6,6 +6,7 @@ export const snaptextOcrJobSchema = z.object({
   fileSize: z.number().int().positive("fileSize must be a positive integer."),
   fileHash: z.string().trim().min(16, "fileHash is required."),
   emailMessageId: z.string().trim().min(1).optional(),
+  ocrJobId: z.string().trim().min(1).optional(),
 });
 
 export type SnaptextOcrJobInput = z.infer<typeof snaptextOcrJobSchema>;

@@ -2,7 +2,7 @@ import type { InputJsonValue } from "@prisma/client/runtime/client";
 import { apiError, validateBearerToken } from "@/lib/api-auth";
 import { normalizeSnaptextResult } from "@/lib/ocr-schema";
 import { prisma } from "@/lib/prisma";
-import { snaptextOcrResultSchema } from "@/lib/validations/ocr-result";
+import { snaptextWebhookResultSchema } from "@/lib/validations/ocr-result";
 
 function mapStatus(status: string): "PROCESSING" | "COMPLETED" | "FAILED" {
   const normalized = status.toLowerCase();
@@ -28,20 +28,23 @@ export async function POST(
 
   const { jobId } = await params;
   const body = await request.json().catch(() => null);
-  const parsed = snaptextOcrResultSchema.safeParse(body);
+  const parsed = snaptextWebhookResultSchema.safeParse(body);
 
   if (!parsed.success) {
     return apiError("Invalid OCR result payload", "INVALID_PAYLOAD", 400);
   }
 
+  const providerJobId = parsed.data.providerJobId ?? parsed.data.jobId ?? parsed.data.id;
   const status = mapStatus(parsed.data.status);
-  const normalizedResult = normalizeSnaptextResult(parsed.data.result);
+  const rawResult = parsed.data.result ?? parsed.data.data ?? parsed.data.output ?? parsed.data.extraction ?? parsed.data;
+  const normalizedResult = normalizeSnaptextResult(rawResult);
   const job = await prisma.ocrJob.update({
     where: { id: jobId },
     data: {
-      providerJobId: parsed.data.providerJobId,
+      providerJobId,
       providerStatus: parsed.data.status,
       status,
+      response: parsed.data as InputJsonValue,
       result: normalizedResult as InputJsonValue,
       resultReceivedAt: new Date(),
     },

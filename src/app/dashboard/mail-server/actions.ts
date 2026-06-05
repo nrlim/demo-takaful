@@ -1,14 +1,19 @@
 "use server";
 
+import type { InputJsonValue } from "@prisma/client/runtime/client";
 import { revalidatePath } from "next/cache";
 import { isAuthenticated } from "@/lib/auth";
-import { fetchRecentMailMessages, verifyMailServerConnection } from "@/lib/mail-server";
+import { writeEmailGatewayLog } from "@/lib/email-gateway-log";
+import { normalizeSnaptextResult } from "@/lib/ocr-schema";
+import { fetchRecentMailMessages, listMailServerMailboxes, verifyMailServerConnection } from "@/lib/mail-server";
 import { uploadPdfAttachment, type StoredPdfAttachment } from "@/lib/pdf-storage";
 import { prisma } from "@/lib/prisma";
 import { decryptSecret, encryptSecret } from "@/lib/secret-crypto";
+import { createSnaptextOcrJob, mapProviderStatus, SNAPTEXT_PROVIDER } from "@/lib/snaptext";
 import {
   connectionIdSchema,
   mailServerConnectionSchema,
+  updateMailServerConnectionSchema,
   type MailServerConnectionInput,
 } from "@/lib/validations/mail-server";
 
@@ -46,14 +51,16 @@ function matchMessageToRule(
   message: Awaited<ReturnType<typeof fetchRecentMailMessages>>[number],
   rules: ActiveCatchRule[],
 ): RuleMatchResult | null {
-  const normalizedRecipient = message.toEmail.toLowerCase();
+  const normalizedRecipients = new Set(
+    message.recipientEmails.map((email) => email.toLowerCase()),
+  );
 
   if (message.pdfAttachments.length === 0) {
     return null;
   }
 
   for (const rule of rules) {
-    if (rule.email.toLowerCase() !== normalizedRecipient) {
+    if (!normalizedRecipients.has(rule.email.toLowerCase())) {
       continue;
     }
 
@@ -86,6 +93,100 @@ function matchMessageToRule(
   return null;
 }
 
+async function triggerOcrForStoredAttachments(input: {
+  connectionId: string;
+  emailMessageId: string;
+  attachments: StoredPdfAttachment[];
+}): Promise<void> {
+  for (const attachment of input.attachments) {
+    const ocrJob = await prisma.ocrJob.create({
+      data: {
+        provider: SNAPTEXT_PROVIDER,
+        emailMessageId: input.emailMessageId,
+        pdfUrl: attachment.publicUrl,
+        filename: attachment.filename,
+        fileSize: attachment.fileSize,
+        fileHash: attachment.fileHash,
+        status: "PROCESSING",
+      },
+    });
+
+    await writeEmailGatewayLog({
+      connectionId: input.connectionId,
+      level: "SYNC",
+      event: "OCR_TRIGGERED",
+      message: "PDF attachment submitted to Snaptext OCR.",
+      metadata: { ocrJobId: ocrJob.id, filename: attachment.filename, publicUrl: attachment.publicUrl },
+    });
+
+    try {
+      const providerJob = await createSnaptextOcrJob({
+        pdfUrl: attachment.publicUrl,
+        filename: attachment.filename,
+        fileSize: attachment.fileSize,
+        fileHash: attachment.fileHash,
+        emailMessageId: input.emailMessageId,
+        ocrJobId: ocrJob.id,
+      });
+      const mappedStatus = mapProviderStatus(providerJob.status);
+      const normalizedResult = normalizeSnaptextResult(providerJob);
+      const providerJobId = typeof providerJob.id === "string"
+        ? providerJob.id
+        : typeof providerJob.jobId === "string"
+          ? providerJob.jobId
+          : undefined;
+
+      await prisma.ocrJob.update({
+        where: { id: ocrJob.id },
+        data: {
+          providerJobId,
+          providerStatus: providerJob.status,
+          status: mappedStatus,
+          response: providerJob as InputJsonValue,
+          result: normalizedResult as InputJsonValue,
+          resultReceivedAt: new Date(),
+        },
+      });
+      await prisma.emailMessage.update({
+        where: { id: input.emailMessageId },
+        data: {
+          ocrJobId: ocrJob.id,
+          ocr: mappedStatus === "COMPLETED",
+          ocrStatus: mappedStatus,
+        },
+      });
+      await writeEmailGatewayLog({
+        connectionId: input.connectionId,
+        level: "OK",
+        event: "OCR_ACCEPTED",
+        message: "Snaptext OCR job accepted successfully.",
+        metadata: { ocrJobId: ocrJob.id, providerJobId: providerJobId ?? null, status: mappedStatus },
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message.slice(0, 500) : "OCR submission failed.";
+      await prisma.ocrJob.update({
+        where: { id: ocrJob.id },
+        data: { status: "FAILED", errorMessage },
+      });
+      await prisma.emailMessage.update({
+        where: { id: input.emailMessageId },
+        data: {
+          ocrJobId: ocrJob.id,
+          ocr: false,
+          ocrStatus: "FAILED",
+        },
+      });
+      await writeEmailGatewayLog({
+        connectionId: input.connectionId,
+        level: "ERROR",
+        event: "OCR_FAILED",
+        message: "Snaptext OCR submission failed.",
+        metadata: { ocrJobId: ocrJob.id, filename: attachment.filename, error: errorMessage },
+      });
+    }
+  }
+}
+
 function buildConfigFromRecord(record: {
   name: string;
   host: string;
@@ -94,6 +195,7 @@ function buildConfigFromRecord(record: {
   password: string;
   mailbox: string;
   secure: boolean;
+  onlyUnread: boolean;
 }): MailServerConnectionInput {
   return {
     name: record.name,
@@ -103,6 +205,7 @@ function buildConfigFromRecord(record: {
     password: decryptSecret(record.password),
     mailbox: record.mailbox,
     secure: record.secure,
+    onlyUnread: record.onlyUnread,
   };
 }
 
@@ -122,6 +225,7 @@ export async function connectMailServerAction(
     password: formData.get("password"),
     mailbox: formData.get("mailbox"),
     secure: formData.get("secure") ?? "false",
+    onlyUnread: formData.get("onlyUnread") ?? "false",
   });
 
   if (!parsed.success) {
@@ -129,15 +233,28 @@ export async function connectMailServerAction(
   }
 
   try {
+    await writeEmailGatewayLog({
+      level: "INFO",
+      event: "CONNECT_ATTEMPT",
+      message: `Testing IMAP connection to ${parsed.data.host}:${parsed.data.port}/${parsed.data.mailbox}`,
+      metadata: { host: parsed.data.host, port: parsed.data.port, mailbox: parsed.data.mailbox },
+    });
     await verifyMailServerConnection(parsed.data);
 
-    await prisma.mailServerConnection.create({
+    const createdConnection = await prisma.mailServerConnection.create({
       data: {
         ...parsed.data,
         password: encryptSecret(parsed.data.password),
         status: "CONNECTED",
         lastError: null,
       },
+    });
+    await writeEmailGatewayLog({
+      connectionId: createdConnection.id,
+      level: "OK",
+      event: "CONNECT_SUCCESS",
+      message: "Mail server connected and mailbox opened successfully.",
+      metadata: { host: parsed.data.host, mailbox: parsed.data.mailbox },
     });
 
     revalidatePath("/dashboard/mail-server");
@@ -146,13 +263,20 @@ export async function connectMailServerAction(
     const safeError = error instanceof Error ? error.message : "Unable to connect mail server.";
 
     try {
-      await prisma.mailServerConnection.create({
+      const failedConnection = await prisma.mailServerConnection.create({
         data: {
           ...parsed.data,
           password: encryptSecret(parsed.data.password),
           status: "ERROR",
           lastError: safeError.slice(0, 500),
         },
+      });
+      await writeEmailGatewayLog({
+        connectionId: failedConnection.id,
+        level: "ERROR",
+        event: "CONNECT_FAILED",
+        message: "Mail server connection failed.",
+        metadata: { error: safeError.slice(0, 500), host: parsed.data.host, mailbox: parsed.data.mailbox },
       });
     } catch {
       return { error: "Mail server failed and database is not ready. Check DATABASE_URL and DIRECT_URL." };
@@ -161,6 +285,99 @@ export async function connectMailServerAction(
     revalidatePath("/dashboard/mail-server");
     return { error: "Mail server connection failed. Check host, port, credential, and mailbox." };
   }
+}
+
+export async function updateMailServerAction(formData: FormData): Promise<void> {
+  if (!(await isAuthenticated())) {
+    return;
+  }
+
+  const parsed = updateMailServerConnectionSchema.safeParse({
+    connectionId: formData.get("connectionId"),
+    name: formData.get("name"),
+    host: formData.get("host"),
+    port: formData.get("port"),
+    username: formData.get("username"),
+    password: formData.get("password") || undefined,
+    mailbox: formData.get("mailbox"),
+    secure: formData.get("secure") ?? "false",
+    onlyUnread: formData.get("onlyUnread") ?? "false",
+  });
+
+  if (!parsed.success) {
+    return;
+  }
+
+  const existing = await prisma.mailServerConnection.findUnique({
+    where: { id: parsed.data.connectionId },
+  });
+
+  if (!existing) {
+    return;
+  }
+
+  const password = parsed.data.password?.trim()
+    ? parsed.data.password
+    : decryptSecret(existing.password);
+  const config: MailServerConnectionInput = {
+    name: parsed.data.name,
+    host: parsed.data.host,
+    port: parsed.data.port,
+    username: parsed.data.username,
+    password,
+    mailbox: parsed.data.mailbox,
+    secure: parsed.data.secure,
+    onlyUnread: parsed.data.onlyUnread,
+  };
+
+  try {
+    await writeEmailGatewayLog({
+      connectionId: existing.id,
+      level: "INFO",
+      event: "UPDATE_CONNECT_TEST",
+      message: "Testing updated IMAP configuration before saving.",
+      metadata: { host: config.host, port: config.port, mailbox: config.mailbox },
+    });
+    await verifyMailServerConnection(config);
+
+    await prisma.mailServerConnection.update({
+      where: { id: existing.id },
+      data: {
+        name: config.name,
+        host: config.host,
+        port: config.port,
+        username: config.username,
+        password: encryptSecret(password),
+        mailbox: config.mailbox,
+        secure: config.secure,
+        onlyUnread: config.onlyUnread,
+        status: "CONNECTED",
+        lastError: null,
+      },
+    });
+
+    await writeEmailGatewayLog({
+      connectionId: existing.id,
+      level: "OK",
+      event: "UPDATE_CONNECT_SUCCESS",
+      message: "Updated IMAP configuration saved successfully.",
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message.slice(0, 500) : "Update failed.";
+    await prisma.mailServerConnection.update({
+      where: { id: existing.id },
+      data: { status: "ERROR", lastError: errorMessage },
+    });
+    await writeEmailGatewayLog({
+      connectionId: existing.id,
+      level: "ERROR",
+      event: "UPDATE_CONNECT_FAILED",
+      message: "Updated IMAP configuration failed connection test.",
+      metadata: { error: errorMessage },
+    });
+  }
+
+  revalidatePath("/dashboard/mail-server");
 }
 
 export async function syncMailMessagesAction(formData: FormData): Promise<void> {
@@ -185,7 +402,61 @@ export async function syncMailMessagesAction(formData: FormData): Promise<void> 
   }
 
   try {
-    const messages = await fetchRecentMailMessages(buildConfigFromRecord(connection));
+    await writeEmailGatewayLog({
+      connectionId: connection.id,
+      level: "SYNC",
+      event: "SYNC_STARTED",
+      message: "Mailbox sync started. Searching latest messages across configured folders.",
+      metadata: { mailbox: connection.mailbox, host: connection.host, onlyUnread: connection.onlyUnread },
+    });
+    const config = buildConfigFromRecord(connection);
+    const availableMailboxes = await listMailServerMailboxes(config);
+    await writeEmailGatewayLog({
+      connectionId: connection.id,
+      level: "INFO",
+      event: "MAILBOXES_DISCOVERED",
+      message: `${availableMailboxes.length} mailbox folder(s) discovered from IMAP server.`,
+      metadata: { availableMailboxes: availableMailboxes.slice(0, 40), configuredMailboxes: connection.mailbox },
+    });
+    const messages = await fetchRecentMailMessages(config);
+    await writeEmailGatewayLog({
+      connectionId: connection.id,
+      level: "INFO",
+      event: "MESSAGES_FETCHED",
+      message: `${messages.length} recent message(s) fetched from IMAP.`,
+      metadata: { fetched: messages.length, recipients: messages.flatMap((message) => message.recipientEmails).slice(0, 20) },
+    });
+
+    const existingMessages = messages.length > 0
+      ? await prisma.emailMessage.findMany({
+        where: {
+          OR: messages.map((message) => ({
+            connectionId: connection.id,
+            sourceMailbox: message.sourceMailbox,
+            messageUid: message.uid,
+          })),
+        },
+        select: {
+          sourceMailbox: true,
+          messageUid: true,
+        },
+      })
+      : [];
+    const existingMessageKeys = new Set(
+      existingMessages.map((message) => `${message.sourceMailbox}:${message.messageUid}`),
+    );
+    const newMessages = messages.filter(
+      (message) => !existingMessageKeys.has(`${message.sourceMailbox}:${message.uid}`),
+    );
+
+    await writeEmailGatewayLog({
+      connectionId: connection.id,
+      level: newMessages.length > 0 ? "INFO" : "OK",
+      event: "NEW_MESSAGES_FILTERED",
+      message: `${newMessages.length} new message(s) remain after skipping already stored messages.`,
+      metadata: { fetched: messages.length, skippedExisting: messages.length - newMessages.length, newMessages: newMessages.length },
+    });
+
     const activeRecipientRules = await prisma.recipientCatchRule.findMany({
       where: { enabled: true },
       orderBy: [{ priority: "asc" }, { updatedAt: "desc" }],
@@ -200,9 +471,23 @@ export async function syncMailMessagesAction(formData: FormData): Promise<void> 
         attachmentKeywords: true,
       },
     });
-    const matchedMessages = messages
+    await writeEmailGatewayLog({
+      connectionId: connection.id,
+      level: "INFO",
+      event: "RULES_LOADED",
+      message: `${activeRecipientRules.length} active catch rule(s) loaded.`,
+      metadata: { activeRules: activeRecipientRules.length },
+    });
+    const matchedMessages = newMessages
       .map((message) => ({ message, match: matchMessageToRule(message, activeRecipientRules) }))
       .filter((item): item is { message: typeof messages[number]; match: RuleMatchResult } => Boolean(item.match));
+    await writeEmailGatewayLog({
+      connectionId: connection.id,
+      level: matchedMessages.length > 0 ? "MATCH" : "WARN",
+      event: "MESSAGES_MATCHED",
+      message: `${matchedMessages.length} message(s) matched recipient/content/attachment rules.`,
+      metadata: { matched: matchedMessages.length, fetched: messages.length, newMessages: newMessages.length, checkedRecipients: newMessages.flatMap((message) => message.recipientEmails).slice(0, 20) },
+    });
 
     const storedMatches: Array<{
       message: typeof messages[number];
@@ -211,6 +496,28 @@ export async function syncMailMessagesAction(formData: FormData): Promise<void> 
     }> = [];
 
     for (const item of matchedMessages) {
+      const alreadyStored = await prisma.emailMessage.findUnique({
+        where: {
+          connectionId_sourceMailbox_messageUid: {
+            connectionId: connection.id,
+            sourceMailbox: item.message.sourceMailbox,
+            messageUid: item.message.uid,
+          },
+        },
+        select: { id: true },
+      });
+
+      if (alreadyStored) {
+        await writeEmailGatewayLog({
+          connectionId: connection.id,
+          level: "OK",
+          event: "MESSAGE_ALREADY_STORED",
+          message: "Matched email skipped because it already exists in OCR queue.",
+          metadata: { uid: item.message.uid, mailbox: item.message.sourceMailbox },
+        });
+        continue;
+      }
+
       const attachments: StoredPdfAttachment[] = [];
 
       for (const attachment of item.message.pdfAttachments) {
@@ -224,21 +531,38 @@ export async function syncMailMessagesAction(formData: FormData): Promise<void> 
 
       if (attachments.length > 0) {
         storedMatches.push({ ...item, attachments });
+        await writeEmailGatewayLog({
+          connectionId: connection.id,
+          level: "STORE",
+          event: "PDF_UPLOADED",
+          message: `${attachments.length} PDF attachment(s) uploaded to public storage.`,
+          metadata: { uid: item.message.uid, mailbox: item.message.sourceMailbox, files: attachments.map((attachment) => attachment.filename) },
+        });
+      } else {
+        await writeEmailGatewayLog({
+          connectionId: connection.id,
+          level: "WARN",
+          event: "NO_PDF_ATTACHMENT",
+          message: "Matched email skipped because no PDF attachment was stored.",
+          metadata: { uid: item.message.uid, mailbox: item.message.sourceMailbox, subject: item.message.subject },
+        });
       }
     }
 
     for (const { message, match, attachments } of storedMatches) {
       const savedMessage = await prisma.emailMessage.upsert({
         where: {
-          connectionId_messageUid: {
+          connectionId_sourceMailbox_messageUid: {
             connectionId: connection.id,
+            sourceMailbox: message.sourceMailbox,
             messageUid: message.uid,
           },
         },
         update: {
           messageId: message.messageId,
+          sourceMailbox: message.sourceMailbox,
           fromEmail: message.fromEmail,
-          toEmail: message.toEmail,
+          toEmail: message.recipientEmails.join(", "),
           subject: message.subject,
           bodyPreview: message.bodyPreview,
           receivedAt: message.receivedAt,
@@ -252,9 +576,10 @@ export async function syncMailMessagesAction(formData: FormData): Promise<void> 
         create: {
           connectionId: connection.id,
           messageUid: message.uid,
+          sourceMailbox: message.sourceMailbox,
           messageId: message.messageId,
           fromEmail: message.fromEmail,
-          toEmail: message.toEmail,
+          toEmail: message.recipientEmails.join(", "),
           subject: message.subject,
           bodyPreview: message.bodyPreview,
           receivedAt: message.receivedAt,
@@ -281,6 +606,18 @@ export async function syncMailMessagesAction(formData: FormData): Promise<void> 
         })),
         skipDuplicates: true,
       });
+      await writeEmailGatewayLog({
+        connectionId: connection.id,
+        level: "STORE",
+        event: "MESSAGE_STORED",
+        message: "Email message saved to OCR queue with OCR false.",
+        metadata: { uid: message.uid, mailbox: message.sourceMailbox, messageId: savedMessage.id, category: match.rule.category },
+      });
+      await triggerOcrForStoredAttachments({
+        connectionId: connection.id,
+        emailMessageId: savedMessage.id,
+        attachments,
+      });
     }
 
     const matchedRuleIds = new Set(
@@ -304,12 +641,27 @@ export async function syncMailMessagesAction(formData: FormData): Promise<void> 
         lastSyncAt: new Date(),
       },
     });
+    await writeEmailGatewayLog({
+      connectionId: connection.id,
+      level: "OK",
+      event: "SYNC_COMPLETED",
+      message: `Mailbox sync completed. ${storedMatches.length} message(s) stored to queue.`,
+      metadata: { stored: storedMatches.length, matched: matchedMessages.length, fetched: messages.length, newMessages: newMessages.length },
+    });
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message.slice(0, 500) : "Sync failed.";
+    await writeEmailGatewayLog({
+      connectionId: connection.id,
+      level: "ERROR",
+      event: "SYNC_FAILED",
+      message: "Mailbox sync failed.",
+      metadata: { error: errorMessage },
+    });
     await prisma.mailServerConnection.update({
       where: { id: connection.id },
       data: {
         status: "ERROR",
-        lastError: error instanceof Error ? error.message.slice(0, 500) : "Sync failed.",
+        lastError: errorMessage,
       },
     });
   }

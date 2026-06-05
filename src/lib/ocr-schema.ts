@@ -145,16 +145,52 @@ export const takafulApplicationOcrSchema = {
         website: { type: ["string", "null"] }
       }
     },
+    pages: {
+      type: "array",
+      description: "Page-level OCR extraction. Group extracted information by source PDF page for side-by-side audit review.",
+      items: {
+        type: "object",
+        properties: {
+          page_number: { type: "number" },
+          page_label: { type: ["string", "null"], description: "Optional page title or section label if visible." },
+          page_type: { type: ["string", "null"], description: "Detected page section, for example applicant data, beneficiaries, health declaration, payment, signature." },
+          extracted_fields: {
+            type: "object",
+            description: "Fields found on this page only. Use the same field names as the document-level schema where possible."
+          },
+          confidence_score: { type: ["number", "null"], description: "Page-level extraction confidence from 0 to 1." },
+          readability_score: { type: ["number", "null"], description: "Page-level readability score from 0 to 1 based on scan clarity and text legibility." },
+          issues: { type: "array", items: { type: "string" } }
+        },
+        required: ["page_number", "extracted_fields"]
+      }
+    },
     ocr_feedback: {
       type: "object",
-      description: "Feedback from AI regarding OCR extraction quality and document clarity.",
+      description: "Feedback from AI regarding OCR extraction quality, page count, readability, usability, and document clarity.",
       properties: {
         confidence_score: { type: "number", description: "Overall extraction confidence from 0 to 1." },
+        readability_score: { type: ["number", "null"], description: "Overall readability score from 0 to 1 based on scan clarity and text legibility." },
+        usability_score: { type: ["number", "null"], description: "Overall usability score from 0 to 1 for operational review readiness." },
+        total_pages: { type: ["number", "null"], description: "Total PDF pages detected." },
         is_blurry: { type: "boolean" },
         missing_fields: { type: "array", items: { type: "string" } },
+        page_feedback: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              page_number: { type: "number" },
+              confidence_score: { type: ["number", "null"] },
+              readability_score: { type: ["number", "null"] },
+              issues: { type: "array", items: { type: "string" } }
+            },
+            required: ["page_number"]
+          }
+        },
         extraction_notes: { type: "string" }
       },
-      required: ["confidence_score", "is_blurry"]
+      required: ["confidence_score", "is_blurry", "total_pages"]
     }
   },
   required: ["document_type", "personal_data", "ocr_feedback"]

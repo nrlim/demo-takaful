@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
-import { CheckCircle, MailPlus, Pause, Play, Trash2, X } from "lucide-react";
+import { CheckCircle, MailPlus, Pause, Pencil, Play, Trash2, X } from "lucide-react";
 import type { InsuranceDocumentCategory } from "@/lib/validations/recipient-catch-rule";
 import {
   createRecipientCatchRuleAction,
@@ -140,6 +141,10 @@ export function RecipientCatchManager({ rules }: RecipientCatchManagerProps): Re
                   <p className="mt-2 text-xs text-slate-500">{rule.matchedToday} matched today</p>
                 </div>
                 <div className="flex flex-col gap-3 sm:flex-row lg:justify-end">
+                  <Link href={`/dashboard/catch-rules/${rule.id}/edit`} className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-slate-300 px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-200">
+                    <Pencil className="size-3.5" aria-hidden />
+                    Edit
+                  </Link>
                   <form action={toggleRecipientCatchRuleAction}>
                     <input type="hidden" name="ruleId" value={rule.id} />
                     <button type="submit" className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-slate-300 px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-200">

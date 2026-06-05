@@ -55,6 +55,20 @@ model OcrJob {
   @@index([status, createdAt])
 }
 
+model EmailGatewayLog {
+  id           String   @id @default(cuid())
+  connectionId String?
+  level        String
+  event        String
+  message      String
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  @@index([connectionId, createdAt])
+  @@index([level, createdAt])
+  @@index([event])
+}
+
 model MailServerConnection {
   id          String               @id @default(cuid())
   name        String
@@ -64,6 +78,7 @@ model MailServerConnection {
   password    String
   mailbox     String               @default("INBOX")
   secure      Boolean              @default(true)
+  onlyUnread  Boolean              @default(true)
   status      MailConnectionStatus @default(DISCONNECTED)
   lastError   String?
   lastSyncAt  DateTime?
@@ -115,6 +130,7 @@ model EmailMessage {
   connectionId   String
   messageUid     Int
   messageId      String?
+  sourceMailbox  String               @default("INBOX")
   fromEmail      String
   toEmail        String
   subject        String
@@ -134,9 +150,9 @@ model EmailMessage {
   connection     MailServerConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
   attachments    EmailAttachment[]
 
-  @@unique([connectionId, messageUid])
+  @@unique([connectionId, sourceMailbox, messageUid])
   @@index([ocr, receivedAt])
-  @@index([connectionId, receivedAt])
+  @@index([connectionId, sourceMailbox, receivedAt])
   @@index([fromEmail])
   @@index([toEmail])
 }

@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { triggerPendingOcrMessagesAction } from "./actions";
 import { MessagesTable, type MessageSortKey, type MessageTableRow } from "./messages-table";
 
 export const dynamic = "force-dynamic";
@@ -190,12 +191,19 @@ export default async function MessagesPage({
 
   return (
     <div className="flex flex-col gap-8">
-      <header>
-        <p className="text-sm font-semibold uppercase tracking-[0.18em] text-sky-800">Messages</p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">Incoming Message List</h1>
-        <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-          Pesan yang ditemukan dari mail server disimpan di sini. Table ini memakai standar search, filter, sort, dan pagination untuk semua list data berikutnya.
-        </p>
+      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-sky-800">Messages</p>
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">Incoming Message List</h1>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+            Pesan yang ditemukan dari mail server disimpan di sini. Table ini memakai standar search, filter, sort, dan pagination untuk semua list data berikutnya.
+          </p>
+        </div>
+        <form action={triggerPendingOcrMessagesAction}>
+          <button type="submit" className="h-11 rounded-md bg-sky-800 px-4 text-sm font-semibold text-white transition hover:bg-sky-900 focus:outline-none focus:ring-2 focus:ring-sky-200">
+            Trigger pending OCR
+          </button>
+        </form>
       </header>
 
       {data.error ? (

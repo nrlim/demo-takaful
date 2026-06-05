@@ -33,8 +33,9 @@ export function MailServerForm(): React.JSX.Element {
       </div>
 
       <div className="flex flex-col gap-2">
-        <label htmlFor="mailbox" className="text-sm font-medium text-slate-800">Mailbox</label>
-        <input id="mailbox" name="mailbox" className="h-11 rounded-md border border-slate-300 px-3 outline-none focus:border-sky-700 focus:ring-2 focus:ring-sky-100" defaultValue="INBOX" required />
+        <label htmlFor="mailbox" className="text-sm font-medium text-slate-800">Mailboxes</label>
+        <input id="mailbox" name="mailbox" className="h-11 rounded-md border border-slate-300 px-3 outline-none focus:border-sky-700 focus:ring-2 focus:ring-sky-100" defaultValue="INBOX,Junk,Junk Email,Spam,[Gmail]/Spam" required />
+        <p className="text-xs leading-5 text-slate-500">Pisahkan dengan koma. Tambahkan folder Junk/Spam karena email test sering masuk ke sana.</p>
       </div>
 
       <div className="flex flex-col gap-2">
@@ -47,10 +48,16 @@ export function MailServerForm(): React.JSX.Element {
         <input id="password" name="password" type="password" autoComplete="current-password" className="h-11 rounded-md border border-slate-300 px-3 outline-none focus:border-sky-700 focus:ring-2 focus:ring-sky-100" required />
       </div>
 
-      <label className="flex items-center gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-medium text-slate-800 md:col-span-2">
-        <input type="checkbox" name="secure" value="true" defaultChecked className="size-4 accent-sky-800" />
-        Use secure TLS connection
-      </label>
+      <div className="grid gap-3 md:col-span-2 md:grid-cols-2">
+        <label className="flex items-center gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-medium text-slate-800">
+          <input type="checkbox" name="secure" value="true" defaultChecked className="size-4 accent-sky-800" />
+          Use secure TLS connection
+        </label>
+        <label className="flex items-center gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-medium text-slate-800">
+          <input type="checkbox" name="onlyUnread" value="true" defaultChecked className="size-4 accent-sky-800" />
+          Fetch unread messages only
+        </label>
+      </div>
 
       {state.error ? (
         <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 md:col-span-2">{state.error}</p>

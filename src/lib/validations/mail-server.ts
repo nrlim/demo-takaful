@@ -8,6 +8,12 @@ export const mailServerConnectionSchema = z.object({
   password: z.string().min(1, "Password is required."),
   mailbox: z.string().trim().min(1, "Mailbox is required."),
   secure: z.enum(["true", "false"]).transform((value) => value === "true"),
+  onlyUnread: z.enum(["true", "false"]).transform((value) => value === "true"),
+});
+
+export const updateMailServerConnectionSchema = mailServerConnectionSchema.extend({
+  connectionId: z.string().trim().min(1),
+  password: z.string().optional(),
 });
 
 export const connectionIdSchema = z.object({
