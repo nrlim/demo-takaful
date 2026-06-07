@@ -38,6 +38,20 @@ interface RuleMatchResult {
   reason: string;
 }
 
+function shouldWriteVerboseGatewayLogs(): boolean {
+  return process.env.EMAIL_GATEWAY_VERBOSE_LOGS === "true";
+}
+
+async function writeVerboseEmailGatewayLog(
+  input: Parameters<typeof writeEmailGatewayLog>[0],
+): Promise<void> {
+  if (!shouldWriteVerboseGatewayLogs()) {
+    return;
+  }
+
+  await writeEmailGatewayLog(input);
+}
+
 function includesAnyKeyword(value: string, keywords: string[]): boolean {
   if (keywords.length === 0) {
     return true;
@@ -132,7 +146,7 @@ async function persistEmailAttachments(input: {
     storedCount += 1;
   }
 
-  await writeEmailGatewayLog({
+  await writeVerboseEmailGatewayLog({
     connectionId: input.connectionId,
     level: "STORE",
     event: "ATTACHMENTS_STORED",
@@ -164,7 +178,7 @@ async function triggerOcrForStoredAttachments(input: {
       },
     });
 
-    await writeEmailGatewayLog({
+    await writeVerboseEmailGatewayLog({
       connectionId: input.connectionId,
       level: "SYNC",
       event: "OCR_TRIGGERED",
@@ -205,7 +219,7 @@ async function triggerOcrForStoredAttachments(input: {
           ocrStatus: mappedStatus,
         },
       });
-      await writeEmailGatewayLog({
+      await writeVerboseEmailGatewayLog({
         connectionId: input.connectionId,
         level: "OK",
         event: "OCR_ACCEPTED",
@@ -282,51 +296,79 @@ export async function connectMailServerAction(
     return { error: parsed.error.issues[0]?.message ?? "Invalid mail server payload." };
   }
 
+  const existingGateway = await prisma.mailServerConnection.findFirst({
+    orderBy: { createdAt: "asc" },
+  }).catch(() => null);
+
   try {
-    await writeEmailGatewayLog({
+    await writeVerboseEmailGatewayLog({
+      connectionId: existingGateway?.id,
       level: "INFO",
       event: "CONNECT_ATTEMPT",
       message: `Testing IMAP connection to ${parsed.data.host}:${parsed.data.port}/${parsed.data.mailbox}`,
-      metadata: { host: parsed.data.host, port: parsed.data.port, mailbox: parsed.data.mailbox },
+      metadata: { host: parsed.data.host, port: parsed.data.port, mailbox: parsed.data.mailbox, mode: "single_gateway" },
     });
     await verifyMailServerConnection(parsed.data);
 
-    const createdConnection = await prisma.mailServerConnection.create({
-      data: {
-        ...parsed.data,
-        password: encryptSecret(parsed.data.password),
-        status: "CONNECTED",
-        lastError: null,
-      },
-    });
+    const savedConnection = existingGateway
+      ? await prisma.mailServerConnection.update({
+        where: { id: existingGateway.id },
+        data: {
+          ...parsed.data,
+          password: encryptSecret(parsed.data.password),
+          status: "CONNECTED",
+          lastError: null,
+        },
+      })
+      : await prisma.mailServerConnection.create({
+        data: {
+          ...parsed.data,
+          password: encryptSecret(parsed.data.password),
+          status: "CONNECTED",
+          lastError: null,
+        },
+      });
+
     await writeEmailGatewayLog({
-      connectionId: createdConnection.id,
+      connectionId: savedConnection.id,
       level: "OK",
-      event: "CONNECT_SUCCESS",
-      message: "Mail server connected and mailbox opened successfully.",
-      metadata: { host: parsed.data.host, mailbox: parsed.data.mailbox },
+      event: existingGateway ? "CONNECT_UPDATED" : "CONNECT_SUCCESS",
+      message: existingGateway
+        ? "Mail gateway configuration updated and mailbox opened successfully."
+        : "Mail server connected and mailbox opened successfully.",
+      metadata: { host: parsed.data.host, mailbox: parsed.data.mailbox, mode: "single_gateway" },
     });
 
     revalidatePath("/dashboard/mail-server");
-    return { message: "Mail server connected and saved." };
+    return { message: existingGateway ? "Mail gateway configuration updated." : "Mail server connected and saved." };
   } catch (error) {
     const safeError = error instanceof Error ? error.message : "Unable to connect mail server.";
 
     try {
-      const failedConnection = await prisma.mailServerConnection.create({
-        data: {
-          ...parsed.data,
-          password: encryptSecret(parsed.data.password),
-          status: "ERROR",
-          lastError: safeError.slice(0, 500),
-        },
-      });
+      const failedConnection = existingGateway
+        ? await prisma.mailServerConnection.update({
+          where: { id: existingGateway.id },
+          data: {
+            ...parsed.data,
+            password: encryptSecret(parsed.data.password),
+            status: "ERROR",
+            lastError: safeError.slice(0, 500),
+          },
+        })
+        : await prisma.mailServerConnection.create({
+          data: {
+            ...parsed.data,
+            password: encryptSecret(parsed.data.password),
+            status: "ERROR",
+            lastError: safeError.slice(0, 500),
+          },
+        });
       await writeEmailGatewayLog({
         connectionId: failedConnection.id,
         level: "ERROR",
         event: "CONNECT_FAILED",
         message: "Mail server connection failed.",
-        metadata: { error: safeError.slice(0, 500), host: parsed.data.host, mailbox: parsed.data.mailbox },
+        metadata: { error: safeError.slice(0, 500), host: parsed.data.host, mailbox: parsed.data.mailbox, mode: "single_gateway" },
       });
     } catch {
       return { error: "Mail server failed and database is not ready. Check DATABASE_URL and DIRECT_URL." };
@@ -381,7 +423,7 @@ export async function updateMailServerAction(formData: FormData): Promise<void> 
   };
 
   try {
-    await writeEmailGatewayLog({
+    await writeVerboseEmailGatewayLog({
       connectionId: existing.id,
       level: "INFO",
       event: "UPDATE_CONNECT_TEST",
@@ -452,7 +494,7 @@ export async function syncMailMessagesAction(formData: FormData): Promise<void> 
   }
 
   try {
-    await writeEmailGatewayLog({
+    await writeVerboseEmailGatewayLog({
       connectionId: connection.id,
       level: "SYNC",
       event: "SYNC_STARTED",
@@ -461,7 +503,7 @@ export async function syncMailMessagesAction(formData: FormData): Promise<void> 
     });
     const config = buildConfigFromRecord(connection);
     const availableMailboxes = await listMailServerMailboxes(config);
-    await writeEmailGatewayLog({
+    await writeVerboseEmailGatewayLog({
       connectionId: connection.id,
       level: "INFO",
       event: "MAILBOXES_DISCOVERED",
@@ -469,7 +511,7 @@ export async function syncMailMessagesAction(formData: FormData): Promise<void> 
       metadata: { availableMailboxes: availableMailboxes.slice(0, 40), configuredMailboxes: connection.mailbox },
     });
     const messages = await fetchRecentMailMessages(config);
-    await writeEmailGatewayLog({
+    await writeVerboseEmailGatewayLog({
       connectionId: connection.id,
       level: "INFO",
       event: "MESSAGES_FETCHED",
@@ -499,7 +541,7 @@ export async function syncMailMessagesAction(formData: FormData): Promise<void> 
       (message) => !existingMessageKeys.has(`${message.sourceMailbox}:${message.uid}`),
     );
 
-    await writeEmailGatewayLog({
+    await writeVerboseEmailGatewayLog({
       connectionId: connection.id,
       level: newMessages.length > 0 ? "INFO" : "OK",
       event: "NEW_MESSAGES_FILTERED",
@@ -521,7 +563,7 @@ export async function syncMailMessagesAction(formData: FormData): Promise<void> 
         attachmentKeywords: true,
       },
     });
-    await writeEmailGatewayLog({
+    await writeVerboseEmailGatewayLog({
       connectionId: connection.id,
       level: "INFO",
       event: "RULES_LOADED",
@@ -531,7 +573,7 @@ export async function syncMailMessagesAction(formData: FormData): Promise<void> 
     const matchedMessages = messages
       .map((message) => ({ message, match: matchMessageToRule(message, activeRecipientRules) }))
       .filter((item): item is { message: typeof messages[number]; match: RuleMatchResult } => Boolean(item.match));
-    await writeEmailGatewayLog({
+    await writeVerboseEmailGatewayLog({
       connectionId: connection.id,
       level: matchedMessages.length > 0 ? "MATCH" : "WARN",
       event: "MESSAGES_MATCHED",
@@ -578,7 +620,7 @@ export async function syncMailMessagesAction(formData: FormData): Promise<void> 
           sourceMailbox: item.message.sourceMailbox,
           attachments,
         });
-        await writeEmailGatewayLog({
+        await writeVerboseEmailGatewayLog({
           connectionId: connection.id,
           level: "OK",
           event: "MESSAGE_ALREADY_STORED",
@@ -601,7 +643,7 @@ export async function syncMailMessagesAction(formData: FormData): Promise<void> 
 
       if (attachments.length > 0) {
         storedMatches.push({ ...item, attachments });
-        await writeEmailGatewayLog({
+        await writeVerboseEmailGatewayLog({
           connectionId: connection.id,
           level: "STORE",
           event: "PDF_UPLOADED",
@@ -609,7 +651,7 @@ export async function syncMailMessagesAction(formData: FormData): Promise<void> 
           metadata: { uid: item.message.uid, mailbox: item.message.sourceMailbox, files: attachments.map((attachment) => attachment.filename) },
         });
       } else {
-        await writeEmailGatewayLog({
+        await writeVerboseEmailGatewayLog({
           connectionId: connection.id,
           level: "WARN",
           event: "NO_PDF_ATTACHMENT",
@@ -671,7 +713,7 @@ export async function syncMailMessagesAction(formData: FormData): Promise<void> 
         sourceMailbox: message.sourceMailbox,
         attachments,
       });
-      await writeEmailGatewayLog({
+      await writeVerboseEmailGatewayLog({
         connectionId: connection.id,
         level: "STORE",
         event: "MESSAGE_STORED",
@@ -706,13 +748,15 @@ export async function syncMailMessagesAction(formData: FormData): Promise<void> 
         lastSyncAt: new Date(),
       },
     });
-    await writeEmailGatewayLog({
-      connectionId: connection.id,
-      level: "OK",
-      event: "SYNC_COMPLETED",
-      message: `Mailbox sync completed. ${storedMatches.length} message(s) stored to queue.`,
-      metadata: { stored: storedMatches.length, matched: matchedMessages.length, fetched: messages.length, newMessages: newMessages.length },
-    });
+    if (storedMatches.length > 0 || shouldWriteVerboseGatewayLogs()) {
+      await writeEmailGatewayLog({
+        connectionId: connection.id,
+        level: "OK",
+        event: "SYNC_COMPLETED",
+        message: `Mailbox sync completed. ${storedMatches.length} message(s) stored to queue.`,
+        metadata: { stored: storedMatches.length, matched: matchedMessages.length, fetched: messages.length, newMessages: newMessages.length },
+      });
+    }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message.slice(0, 500) : "Sync failed.";
     await writeEmailGatewayLog({

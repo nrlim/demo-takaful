@@ -8,6 +8,21 @@ import { MailServerForm } from "./mail-server-form";
 
 export const dynamic = "force-dynamic";
 
+const LOG_PAGE_SIZE = 20;
+
+interface MailServerSearchParams {
+  logPage?: string;
+}
+
+function normalizePage(value: string | undefined): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 1;
+}
+
+function buildLogPageHref(page: number): string {
+  return `/dashboard/mail-server?logPage=${page}`;
+}
+
 function formatDate(value: Date | null): string {
   if (!value) {
     return "Never";
@@ -19,7 +34,7 @@ function formatDate(value: Date | null): string {
   }).format(value);
 }
 
-async function getConnections(): Promise<{
+async function getConnections(logPage: number): Promise<{
   connections: Array<{
     id: string;
     name: string;
@@ -43,10 +58,16 @@ async function getConnections(): Promise<{
     createdAt: Date;
     metadata: unknown;
   }>;
+  logPagination: {
+    page: number;
+    pageSize: number;
+    totalItems: number;
+    totalPages: number;
+  };
   error?: string;
 }> {
   try {
-    const [connections, logs] = await Promise.all([
+    const [connections, logs, totalLogs] = await Promise.all([
       prisma.mailServerConnection.findMany({
         orderBy: { updatedAt: "desc" },
         include: {
@@ -57,7 +78,8 @@ async function getConnections(): Promise<{
       }),
       prisma.emailGatewayLog.findMany({
         orderBy: { createdAt: "desc" },
-        take: 60,
+        skip: (logPage - 1) * LOG_PAGE_SIZE,
+        take: LOG_PAGE_SIZE,
         select: {
           id: true,
           connectionId: true,
@@ -68,7 +90,9 @@ async function getConnections(): Promise<{
           metadata: true,
         },
       }),
+      prisma.emailGatewayLog.count(),
     ]);
+    const totalPages = Math.max(1, Math.ceil(totalLogs / LOG_PAGE_SIZE));
 
     return {
       connections: connections.map((connection) => ({
@@ -86,18 +110,36 @@ async function getConnections(): Promise<{
         messageCount: connection._count.messages,
       })),
       logs,
+      logPagination: {
+        page: Math.min(logPage, totalPages),
+        pageSize: LOG_PAGE_SIZE,
+        totalItems: totalLogs,
+        totalPages,
+      },
     };
   } catch {
     return {
       connections: [],
       logs: [],
+      logPagination: {
+        page: 1,
+        pageSize: LOG_PAGE_SIZE,
+        totalItems: 0,
+        totalPages: 1,
+      },
       error: "Database belum siap. Tambahkan DATABASE_URL dan DIRECT_URL, lalu jalankan prisma migrate.",
     };
   }
 }
 
-export default async function MailServerPage(): Promise<React.JSX.Element> {
-  const { connections, logs, error } = await getConnections();
+export default async function MailServerPage({
+  searchParams,
+}: {
+  searchParams: Promise<MailServerSearchParams>;
+}): Promise<React.JSX.Element> {
+  const params = await searchParams;
+  const logPage = normalizePage(params.logPage);
+  const { connections, logs, logPagination, error } = await getConnections(logPage);
   const connectedConnectionIds = connections
     .filter((connection) => connection.status === "CONNECTED")
     .map((connection) => connection.id);
@@ -108,7 +150,7 @@ export default async function MailServerPage(): Promise<React.JSX.Element> {
         <p className="text-sm font-semibold uppercase tracking-[0.18em] text-sky-800">Mail Server</p>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">Mail Server Connection</h1>
         <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-          Connect ke IMAP server untuk memonitor pesan masuk. Pesan baru yang ditemukan akan disimpan ke message list dengan flag OCR false.
+          Connect ke satu konfigurasi IMAP gateway untuk memonitor pesan masuk. Catch rules menentukan email tujuan mana yang diproses OCR.
         </p>
       </header>
 
@@ -130,7 +172,7 @@ export default async function MailServerPage(): Promise<React.JSX.Element> {
         <div className="flex flex-col gap-3 border-b border-slate-200 p-5 md:flex-row md:items-start md:justify-between">
           <div>
             <h2 className="text-lg font-semibold text-slate-950">Saved connections</h2>
-            <p className="mt-1 text-sm leading-6 text-slate-600">Auto sync mengambil pesan baru secara berkala. Sync inbox tetap tersedia untuk trigger manual.</p>
+            <p className="mt-1 text-sm leading-6 text-slate-600">Auto sync mengambil pesan baru secara berkala dari satu gateway IMAP. Catch rules menjadi filter alamat email tujuan yang diproses.</p>
           </div>
           <MailAutoSync connectionIds={connectedConnectionIds} />
         </div>
@@ -204,6 +246,9 @@ export default async function MailServerPage(): Promise<React.JSX.Element> {
           </div>
           <LogsAutoRefresh />
         </div>
+        <div className="border-b border-slate-200 bg-slate-50 px-5 py-3 text-sm text-slate-600">
+          Showing {logPagination.totalItems === 0 ? 0 : ((logPagination.page - 1) * logPagination.pageSize) + 1}-{Math.min(logPagination.page * logPagination.pageSize, logPagination.totalItems)} of {logPagination.totalItems} logs
+        </div>
         <div className="max-h-[520px] overflow-y-auto bg-slate-50 p-4 font-mono text-xs">
           {logs.length === 0 ? (
             <p className="text-slate-500">No gateway logs yet. Connect mail server or run Sync inbox to start logging.</p>
@@ -229,6 +274,25 @@ export default async function MailServerPage(): Promise<React.JSX.Element> {
               ))}
             </div>
           )}
+        </div>
+        <div className="flex flex-col gap-3 border-t border-slate-200 px-5 py-4 text-sm text-slate-600 md:flex-row md:items-center md:justify-between">
+          <p>Page {logPagination.page} of {logPagination.totalPages}</p>
+          <div className="flex items-center gap-2">
+            <Link
+              href={buildLogPageHref(Math.max(1, logPagination.page - 1))}
+              aria-disabled={logPagination.page <= 1}
+              className={`h-9 rounded-md border border-slate-300 px-3 py-2 font-semibold transition focus:outline-none focus:ring-2 focus:ring-sky-200 ${logPagination.page <= 1 ? "pointer-events-none opacity-50" : "hover:bg-slate-50"}`}
+            >
+              Previous
+            </Link>
+            <Link
+              href={buildLogPageHref(Math.min(logPagination.totalPages, logPagination.page + 1))}
+              aria-disabled={logPagination.page >= logPagination.totalPages}
+              className={`h-9 rounded-md border border-slate-300 px-3 py-2 font-semibold transition focus:outline-none focus:ring-2 focus:ring-sky-200 ${logPagination.page >= logPagination.totalPages ? "pointer-events-none opacity-50" : "hover:bg-slate-50"}`}
+            >
+              Next
+            </Link>
+          </div>
         </div>
       </section>
     </div>
