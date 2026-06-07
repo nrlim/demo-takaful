@@ -147,49 +147,24 @@ export const takafulApplicationOcrSchema = {
     },
     pagesData: {
       type: "array",
-      description: "Snaptext page-level OCR output. Group extracted information by the exact source PDF page for side-by-side audit review.",
+      description: "Primary Snaptext page-level OCR output. Return one item per scanned PDF page in the same order as the PDF. Do not return technical metadata or OCR feedback here.",
       items: {
         type: "object",
         properties: {
-          page_number: { type: "number" },
-          page_label: { type: ["string", "null"], description: "Optional page title or section label if visible." },
-          page_type: { type: ["string", "null"], description: "Detected page section, for example applicant data, beneficiaries, health declaration, payment, signature." },
-          confidence_score: { type: ["number", "null"], description: "Page-level extraction confidence from 0 to 1." },
-          readability_score: { type: ["number", "null"], description: "Page-level readability score from 0 to 1 based on scan clarity and text legibility." },
-          issues: { type: "array", items: { type: "string" } }
-        },
-        required: ["page_number"]
-      }
-    },
-    ocr_feedback: {
-      type: "object",
-      description: "Feedback from AI regarding OCR extraction quality, page count, readability, usability, and document clarity.",
-      properties: {
-        confidence_score: { type: "number", description: "Overall extraction confidence from 0 to 1." },
-        readability_score: { type: ["number", "null"], description: "Overall readability score from 0 to 1 based on scan clarity and text legibility." },
-        usability_score: { type: ["number", "null"], description: "Overall usability score from 0 to 1 for operational review readiness." },
-        total_pages: { type: ["number", "null"], description: "Total PDF pages detected." },
-        is_blurry: { type: "boolean" },
-        missing_fields: { type: "array", items: { type: "string" } },
-        page_feedback: {
-          type: "array",
-          items: {
+          pageNumber: { type: "number", description: "Source PDF page number, starting from 1." },
+          pageLabel: { type: ["string", "null"], description: "Short visible page title or section label if available." },
+          extractedText: { type: ["string", "null"], description: "Clean readable text captured from this PDF page only." },
+          extractedFields: {
             type: "object",
-            properties: {
-              page_number: { type: "number" },
-              confidence_score: { type: ["number", "null"] },
-              readability_score: { type: ["number", "null"] },
-              issues: { type: "array", items: { type: "string" } }
-            },
-            required: ["page_number"]
-          }
+            description: "Structured fields found on this PDF page only. Keep field names consistent with the document-level schema, for example personal_data, address, beneficiaries, health_history, payment_method, fees, agent, issuer."
+          },
+          confidenceScore: { type: ["number", "null"], description: "Page-level extraction confidence from 0 to 1." }
         },
-        extraction_notes: { type: "string" }
-      },
-      required: ["confidence_score", "is_blurry", "total_pages"]
+        required: ["pageNumber", "extractedFields"]
+      }
     }
   },
-  required: ["document_type", "personal_data", "ocr_feedback"]
+  required: ["pagesData"]
 } as const;
 
 export function normalizeSnaptextResult(response: unknown): unknown {
@@ -198,5 +173,20 @@ export function normalizeSnaptextResult(response: unknown): unknown {
   }
 
   const record = response as Record<string, unknown>;
-  return record.result ?? record.data ?? record.output ?? record.extraction ?? response;
+  const result = record.result ?? record.data ?? record.output ?? record.extraction;
+  const pagesData = record.pagesData ?? record.pages_data ?? record.pageData;
+
+  if (result && typeof result === "object" && !Array.isArray(result) && pagesData !== undefined) {
+    return { pagesData, ...(result as Record<string, unknown>) };
+  }
+
+  if (result !== undefined) {
+    return result;
+  }
+
+  if (pagesData !== undefined) {
+    return { pagesData };
+  }
+
+  return response;
 }

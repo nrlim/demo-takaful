@@ -68,11 +68,13 @@ function matchMessageToRule(
       continue;
     }
 
-    if (!includesAnyKeyword(message.subject, rule.subjectKeywords)) {
-      continue;
-    }
+    const hasSubjectKeywords = rule.subjectKeywords.length > 0;
+    const hasBodyKeywords = rule.bodyKeywords.length > 0;
+    const subjectMatched = hasSubjectKeywords && includesAnyKeyword(message.subject, rule.subjectKeywords);
+    const bodyMatched = hasBodyKeywords && includesAnyKeyword(message.bodyText, rule.bodyKeywords);
+    const requiresContentMatch = hasSubjectKeywords || hasBodyKeywords;
 
-    if (!includesAnyKeyword(message.bodyText, rule.bodyKeywords)) {
+    if (requiresContentMatch && !subjectMatched && !bodyMatched) {
       continue;
     }
 
@@ -81,9 +83,9 @@ function matchMessageToRule(
     }
 
     const reasons = ["recipient"];
-    if (rule.subjectKeywords.length > 0) reasons.push("subject");
-    if (rule.bodyKeywords.length > 0) reasons.push("content");
-    if (rule.attachmentKeywords.length > 0) reasons.push("attachment");
+    if (subjectMatched) reasons.push("subject");
+    if (bodyMatched) reasons.push("content");
+    if (rule.attachmentKeywords.length > 0) reasons.push("attachment name");
     reasons.push("pdf attachment");
     if (rule.requireAttachment) reasons.push("has attachment");
 

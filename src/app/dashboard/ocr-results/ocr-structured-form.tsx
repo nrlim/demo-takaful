@@ -3,7 +3,6 @@
 import { useMemo } from "react";
 import type { JsonValue } from "@prisma/client/runtime/client";
 import {
-  CheckCircle2,
   FileText,
   User,
   MapPin,
@@ -18,7 +17,12 @@ import {
   UserSquare,
   Building,
 } from "lucide-react";
+import { ResultFormRenderer } from "./result-form-renderer";
 import { mapOcrData } from "@/lib/ocr-data-mapper";
+
+function isRecord(value: JsonValue | null | undefined): value is Record<string, JsonValue> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 function formatLabel(value: string): string {
   return value
@@ -80,6 +84,84 @@ function FieldGrid({ data }: { data: Record<string, unknown> }) {
   );
 }
 
+function getPagesData(value: JsonValue | null | undefined): JsonValue[] {
+  if (!isRecord(value)) {
+    return [];
+  }
+
+  const pagesData = value.pagesData ?? value.pages_data ?? value.pageData;
+  return Array.isArray(pagesData) ? pagesData : [];
+}
+
+function getPageNumber(value: JsonValue, fallback: number): number {
+  if (!isRecord(value)) return fallback;
+
+  const pageNumber = value.pageNumber ?? value.page_number ?? value.page ?? value.pageIndex ?? value.page_index;
+  if (typeof pageNumber === "number" && Number.isFinite(pageNumber)) return Math.round(pageNumber);
+  if (typeof pageNumber === "string") {
+    const parsed = Number(pageNumber);
+    return Number.isFinite(parsed) ? Math.round(parsed) : fallback;
+  }
+
+  return fallback;
+}
+
+function getPageDisplayData(value: JsonValue): JsonValue {
+  if (!isRecord(value)) {
+    return value;
+  }
+
+  const extractedFields = value.extractedFields ?? value.extracted_fields;
+  const extractedText = value.extractedText ?? value.extracted_text;
+  const confidenceScore = value.confidenceScore ?? value.confidence_score;
+  const displayData: Record<string, JsonValue> = {};
+
+  if (extractedText !== undefined && extractedText !== null && extractedText !== "") {
+    displayData.extractedText = extractedText;
+  }
+
+  if (isRecord(extractedFields)) {
+    Object.assign(displayData, extractedFields);
+  } else if (extractedFields !== undefined && extractedFields !== null) {
+    displayData.extractedFields = extractedFields;
+  }
+
+  if (confidenceScore !== undefined && confidenceScore !== null) {
+    displayData.confidenceScore = confidenceScore;
+  }
+
+  if (Object.keys(displayData).length > 0) {
+    return displayData;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).filter(([key]) => !["pageNumber", "page_number", "pageLabel", "page_label"].includes(key)),
+  ) as Record<string, JsonValue>;
+}
+
+function PagesDataResult({ pagesData }: { pagesData: JsonValue[] }): React.JSX.Element {
+  return (
+    <div className="flex flex-col gap-4">
+      {pagesData.map((page, index) => {
+        const pageNumber = getPageNumber(page, index + 1);
+        const label = isRecord(page) && typeof (page.pageLabel ?? page.page_label) === "string"
+          ? String(page.pageLabel ?? page.page_label)
+          : null;
+
+        return (
+          <section key={`snaptext-page-${pageNumber}-${index}`} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="mb-4 border-b border-slate-100 pb-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-sky-800">PDF Page {pageNumber}</p>
+              <h2 className="mt-1 text-base font-semibold text-slate-950">{label || `Scanned page ${pageNumber}`}</h2>
+            </div>
+            <ResultFormRenderer data={getPageDisplayData(page)} prefix={`Page ${pageNumber}`} />
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
 function DataTable({ data, columns }: { data: Array<Record<string, unknown>>; columns: string[] }) {
   if (data.length === 0) return null;
 
@@ -122,7 +204,15 @@ export function OcrStructuredForm({
   data: JsonValue;
   response?: JsonValue | null;
 }) {
+  const pagesData = useMemo(() => {
+    const resultPages = getPagesData(data);
+    return resultPages.length > 0 ? resultPages : getPagesData(response);
+  }, [data, response]);
   const mapped = useMemo(() => mapOcrData(data, response), [data, response]);
+
+  if (pagesData.length > 0) {
+    return <PagesDataResult pagesData={pagesData} />;
+  }
 
   return (
     <div className="flex flex-col gap-6">
