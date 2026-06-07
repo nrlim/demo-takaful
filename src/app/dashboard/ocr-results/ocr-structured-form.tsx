@@ -20,7 +20,7 @@ import {
 import { ResultFormRenderer } from "./result-form-renderer";
 import { mapOcrData } from "@/lib/ocr-data-mapper";
 
-function isRecord(value: JsonValue | null | undefined): value is Record<string, JsonValue> {
+function isRecord(value: unknown): value is Record<string, JsonValue> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -210,15 +210,19 @@ export function OcrStructuredForm({
   }, [data, response]);
   const mapped = useMemo(() => mapOcrData(data, response), [data, response]);
 
-  if (pagesData.length > 0) {
-    return <PagesDataResult pagesData={pagesData} />;
-  }
+  const documentMetadata = isRecord(mapped.raw.document_metadata) ? mapped.raw.document_metadata : {};
 
   return (
     <div className="flex flex-col gap-6">
       {Object.keys(mapped.documentInfo).length > 0 && (
         <SectionCard title="Informasi Dokumen" icon={FileText}>
           <FieldGrid data={mapped.documentInfo} />
+        </SectionCard>
+      )}
+
+      {Object.keys(documentMetadata).length > 0 && (
+        <SectionCard title="Kualitas Dokumen" icon={FileText}>
+          <FieldGrid data={documentMetadata} />
         </SectionCard>
       )}
 
@@ -304,6 +308,16 @@ export function OcrStructuredForm({
         <SectionCard title="Penerbit" icon={Building}>
           <FieldGrid data={mapped.issuer} />
         </SectionCard>
+      )}
+
+      {pagesData.length > 0 && (
+        <section>
+          <div className="mb-3 flex items-center gap-2">
+            <FileText className="h-5 w-5 text-sky-700" />
+            <h2 className="text-base font-semibold text-slate-950">Trace OCR per Halaman</h2>
+          </div>
+          <PagesDataResult pagesData={pagesData} />
+        </section>
       )}
     </div>
   );

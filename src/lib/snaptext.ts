@@ -50,6 +50,24 @@ function buildCallbackHeaders(): Record<string, string> | undefined {
   return { Authorization: `Bearer ${token}` };
 }
 
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => windowlessSetTimeout(resolve, milliseconds));
+}
+
+function windowlessSetTimeout(callback: () => void, milliseconds: number): NodeJS.Timeout {
+  return setTimeout(callback, milliseconds);
+}
+
+function getSnaptextWaitConfig(): { timeoutMs: number; intervalMs: number } {
+  const timeoutMs = Number(process.env.SNAPTEXT_SYNC_WAIT_MS ?? 45000);
+  const intervalMs = Number(process.env.SNAPTEXT_POLL_INTERVAL_MS ?? 3000);
+
+  return {
+    timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 45000,
+    intervalMs: Number.isFinite(intervalMs) && intervalMs > 0 ? intervalMs : 3000,
+  };
+}
+
 export async function getSnaptextConfiguration(): Promise<{
   endpoint: string;
   apiKey: string;
@@ -111,7 +129,8 @@ export async function createSnaptextOcrJob(
     );
   }
 
-  return responseBody as SnaptextJobResponse;
+  const acceptedJob = responseBody as SnaptextJobResponse;
+  return await waitForSnaptextCompletion(acceptedJob);
 }
 
 export async function fetchSnaptextOcrJobResult(providerJobId: string): Promise<SnaptextJobResponse> {
@@ -199,23 +218,76 @@ export function extractSnaptextResult(response: unknown): unknown | null {
   return null;
 }
 
+function hasMeaningfulSnaptextResult(result: unknown | null | undefined): boolean {
+  if (result === null || result === undefined) {
+    return false;
+  }
+
+  if (Array.isArray(result)) {
+    return result.length > 0;
+  }
+
+  if (typeof result === "object") {
+    return Object.keys(result).length > 0;
+  }
+
+  if (typeof result === "string") {
+    return result.trim().length > 0;
+  }
+
+  return true;
+}
+
 export function mapProviderStatus(
   status: string | undefined,
   result?: unknown | null,
 ): MappedProviderStatus {
-  const normalizedStatus = status?.toLowerCase() ?? "processing";
+  const normalizedStatus = status?.toLowerCase();
 
-  if (["completed", "complete", "succeeded", "success", "done"].includes(normalizedStatus)) {
+  if (normalizedStatus && ["completed", "complete", "succeeded", "success", "done"].includes(normalizedStatus)) {
     return "COMPLETED";
   }
 
-  if (["failed", "failure", "error", "errored", "rejected", "cancelled", "canceled"].includes(normalizedStatus)) {
+  if (normalizedStatus && ["failed", "failure", "error", "errored", "rejected", "cancelled", "canceled"].includes(normalizedStatus)) {
     return "FAILED";
   }
 
-  if (result !== null && result !== undefined) {
+  if (!normalizedStatus && hasMeaningfulSnaptextResult(result)) {
     return "COMPLETED";
   }
 
   return "PROCESSING";
+}
+
+async function waitForSnaptextCompletion(acceptedJob: SnaptextJobResponse): Promise<SnaptextJobResponse> {
+  const providerJobId = getSnaptextProviderJobId(acceptedJob);
+  const initialResult = extractSnaptextResult(acceptedJob);
+  const initialStatus = mapProviderStatus(acceptedJob.status, initialResult);
+
+  if (!providerJobId || initialStatus !== "PROCESSING") {
+    return acceptedJob;
+  }
+
+  const { timeoutMs, intervalMs } = getSnaptextWaitConfig();
+  const startedAt = Date.now();
+  let latestJob = acceptedJob;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    await sleep(intervalMs);
+
+    try {
+      latestJob = await fetchSnaptextOcrJobResult(providerJobId);
+    } catch {
+      continue;
+    }
+
+    const latestResult = extractSnaptextResult(latestJob);
+    const latestStatus = mapProviderStatus(latestJob.status, latestResult);
+
+    if (latestStatus !== "PROCESSING") {
+      return latestJob;
+    }
+  }
+
+  return latestJob;
 }

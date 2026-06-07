@@ -145,26 +145,35 @@ export const takafulApplicationOcrSchema = {
         website: { type: ["string", "null"] }
       }
     },
+    document_metadata: {
+      type: "object",
+      description: "Document-level quality metadata only. Do not include job IDs, provider metadata, callback URLs, or operational status.",
+      properties: {
+        total_pages: { type: ["number", "null"], description: "Total PDF pages detected." },
+        readability_score: { type: ["number", "null"], description: "Overall readability score from 0 to 100." },
+        data_usability_score: { type: ["number", "null"], description: "Overall usability score from 0 to 100 for business review." }
+      }
+    },
     pagesData: {
       type: "array",
-      description: "Primary Snaptext page-level OCR output. Return one item per scanned PDF page in the same order as the PDF. Do not return technical metadata or OCR feedback here.",
+      description: "Page-level OCR trace from Snaptext. Return exactly one item per scanned PDF page, ordered by the original PDF order. This is supporting trace data; document fields must still be returned in the top-level schema properties.",
       items: {
         type: "object",
         properties: {
-          pageNumber: { type: "number", description: "Source PDF page number, starting from 1." },
-          pageLabel: { type: ["string", "null"], description: "Short visible page title or section label if available." },
+          pageNumber: { type: "number", description: "Actual source PDF page number starting from 1. Must be sequential and must not repeat for different pages." },
+          pageLabel: { type: ["string", "null"], description: "Short label such as 'Halaman 1 dari 6'. Do not place extracted field JSON in this label." },
           extractedText: { type: ["string", "null"], description: "Clean readable text captured from this PDF page only." },
           extractedFields: {
             type: "object",
-            description: "Structured fields found on this PDF page only. Keep field names consistent with the document-level schema, for example personal_data, address, beneficiaries, health_history, payment_method, fees, agent, issuer."
+            description: "Structured fields found on this PDF page only. Must be a JSON object, never a string. Use valid JSON with quoted keys and values. Keep names aligned with top-level schema fields."
           },
           confidenceScore: { type: ["number", "null"], description: "Page-level extraction confidence from 0 to 1." }
         },
-        required: ["pageNumber", "extractedFields"]
+        required: ["pageNumber", "extractedText", "extractedFields"]
       }
     }
   },
-  required: ["pagesData"]
+  required: ["document_type", "pagesData"]
 } as const;
 
 export function normalizeSnaptextResult(response: unknown): unknown {
