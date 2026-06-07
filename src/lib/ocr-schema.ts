@@ -145,24 +145,20 @@ export const takafulApplicationOcrSchema = {
         website: { type: ["string", "null"] }
       }
     },
-    pages: {
+    pagesData: {
       type: "array",
-      description: "Page-level OCR extraction. Group extracted information by source PDF page for side-by-side audit review.",
+      description: "Snaptext page-level OCR output. Group extracted information by the exact source PDF page for side-by-side audit review.",
       items: {
         type: "object",
         properties: {
           page_number: { type: "number" },
           page_label: { type: ["string", "null"], description: "Optional page title or section label if visible." },
           page_type: { type: ["string", "null"], description: "Detected page section, for example applicant data, beneficiaries, health declaration, payment, signature." },
-          extracted_fields: {
-            type: "object",
-            description: "Fields found on this page only. Use the same field names as the document-level schema where possible."
-          },
           confidence_score: { type: ["number", "null"], description: "Page-level extraction confidence from 0 to 1." },
           readability_score: { type: ["number", "null"], description: "Page-level readability score from 0 to 1 based on scan clarity and text legibility." },
           issues: { type: "array", items: { type: "string" } }
         },
-        required: ["page_number", "extracted_fields"]
+        required: ["page_number"]
       }
     },
     ocr_feedback: {

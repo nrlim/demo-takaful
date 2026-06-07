@@ -179,7 +179,24 @@ export function extractSnaptextResult(response: unknown): unknown | null {
     ?? record.extractedData
     ?? record.json
     ?? record.resultJson;
-  return result === undefined ? null : result;
+  const pagesData = record.pagesData ?? record.pages_data ?? record.pageData;
+
+  if (result && typeof result === "object" && !Array.isArray(result) && pagesData !== undefined) {
+    return {
+      pagesData,
+      ...(result as Record<string, unknown>),
+    };
+  }
+
+  if (result !== undefined) {
+    return result;
+  }
+
+  if (pagesData !== undefined) {
+    return { pagesData };
+  }
+
+  return null;
 }
 
 export function mapProviderStatus(

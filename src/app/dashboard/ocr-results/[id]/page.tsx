@@ -93,8 +93,8 @@ function calculateQualityScore(result: JsonValue | null, response: JsonValue | n
   const confidenceValue = findNumberByKeys(result, ["confidence_score", "confidence", "score"])
     ?? findNumberByKeys(response, ["confidence_score", "confidence", "score"]);
   const confidence = confidenceValue === null ? null : normalizeScore(confidenceValue);
-  const pageCount = findNumberByKeys(result, ["page_count", "pages", "total_pages", "totalpages"])
-    ?? findNumberByKeys(response, ["page_count", "pages", "total_pages", "totalpages"]);
+  const pageCount = findNumberByKeys(result, ["page_count", "total_pages", "totalpages"])
+    ?? findNumberByKeys(response, ["page_count", "total_pages", "totalpages"]);
   const snaptextReadability = findNumberByKeys(result, ["readability_score", "readability"])
     ?? findNumberByKeys(response, ["readability_score", "readability"]);
   const snaptextUsability = findNumberByKeys(result, ["usability_score", "usability"])
@@ -272,7 +272,7 @@ export default async function OcrResultDetailPage({
       </section>
 
       {result ? (
-        <OcrPageReviewPanel data={result} pdfUrl={job.pdfUrl} filename={job.filename} />
+        <OcrPageReviewPanel data={result} response={response} pdfUrl={job.pdfUrl} filename={job.filename} />
       ) : (
         <section className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">
           OCR result belum tersedia untuk job ini.
