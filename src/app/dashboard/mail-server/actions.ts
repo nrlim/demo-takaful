@@ -9,7 +9,7 @@ import { fetchRecentMailMessages, listMailServerMailboxes, verifyMailServerConne
 import { uploadPdfAttachment, type StoredPdfAttachment } from "@/lib/pdf-storage";
 import { prisma } from "@/lib/prisma";
 import { decryptSecret, encryptSecret } from "@/lib/secret-crypto";
-import { createSnaptextOcrJob, mapProviderStatus, SNAPTEXT_PROVIDER } from "@/lib/snaptext";
+import { createSnaptextOcrJob, extractSnaptextResult, getSnaptextProviderJobId, mapProviderStatus, SNAPTEXT_PROVIDER } from "@/lib/snaptext";
 import {
   connectionIdSchema,
   mailServerConnectionSchema,
@@ -128,13 +128,11 @@ async function triggerOcrForStoredAttachments(input: {
         emailMessageId: input.emailMessageId,
         ocrJobId: ocrJob.id,
       });
-      const mappedStatus = mapProviderStatus(providerJob.status);
-      const normalizedResult = normalizeSnaptextResult(providerJob);
-      const providerJobId = typeof providerJob.id === "string"
-        ? providerJob.id
-        : typeof providerJob.jobId === "string"
-          ? providerJob.jobId
-          : undefined;
+      const rawResult = extractSnaptextResult(providerJob);
+      const mappedStatus = mapProviderStatus(providerJob.status, rawResult);
+      const normalizedResult = rawResult === null ? null : normalizeSnaptextResult(rawResult);
+      const hasResult = normalizedResult !== null && normalizedResult !== undefined;
+      const providerJobId = getSnaptextProviderJobId(providerJob);
 
       await prisma.ocrJob.update({
         where: { id: ocrJob.id },
@@ -143,8 +141,7 @@ async function triggerOcrForStoredAttachments(input: {
           providerStatus: providerJob.status,
           status: mappedStatus,
           response: providerJob as InputJsonValue,
-          result: normalizedResult as InputJsonValue,
-          resultReceivedAt: new Date(),
+          ...(hasResult ? { result: normalizedResult as InputJsonValue, resultReceivedAt: new Date() } : {}),
         },
       });
       await prisma.emailMessage.update({

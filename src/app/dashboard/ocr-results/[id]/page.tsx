@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { JsonValue } from "@prisma/client/runtime/client";
 import { prisma } from "@/lib/prisma";
-import { ResultFormRenderer } from "../result-form-renderer";
+import { OcrPageReviewPanel } from "../ocr-page-review-panel";
 
 export const dynamic = "force-dynamic";
 
@@ -89,27 +89,6 @@ function countCapturedFields(value: JsonValue | null): number {
   return 1;
 }
 
-function getOcrFeedback(result: JsonValue | null): Record<string, JsonValue> | null {
-  if (!isRecord(result)) {
-    return null;
-  }
-
-  const feedback = result.ocr_feedback;
-  return isRecord(feedback) ? feedback : null;
-}
-
-function displayValue(value: JsonValue): string {
-  if (value === null) return "-";
-  if (typeof value === "boolean") return value ? "Yes" : "No";
-  if (typeof value === "number") return String(value);
-  if (typeof value === "string") return value;
-  return JSON.stringify(value);
-}
-
-function formatFeedbackLabel(value: string): string {
-  return value.replace(/[_-]/g, " ").replace(/\b\w/g, (character) => character.toUpperCase());
-}
-
 function calculateQualityScore(result: JsonValue | null, response: JsonValue | null, status: string): OcrQualityScore {
   const confidenceValue = findNumberByKeys(result, ["confidence_score", "confidence", "score"])
     ?? findNumberByKeys(response, ["confidence_score", "confidence", "score"]);
@@ -193,7 +172,6 @@ export default async function OcrResultDetailPage({
   const result = job.result as JsonValue | null;
   const response = job.response as JsonValue | null;
   const quality = calculateQualityScore(result, response, job.status);
-  const ocrFeedback = getOcrFeedback(result);
 
   return (
     <div className="flex flex-col gap-8">
@@ -220,36 +198,6 @@ export default async function OcrResultDetailPage({
         <ScoreCard label={quality.usabilitySource === "engine" ? "Usability" : "Estimated Usability"} value={`${quality.usability}%`} description={quality.usabilitySource === "engine" ? "Usability score dari OCR engine response." : "Skor internal kesiapan review operasional."} />
         <ScoreCard label="Total Pages" value={quality.pageCount === null ? "-" : String(quality.pageCount)} description={`Field captured: ${quality.capturedFields.toLocaleString("id-ID")}.`} />
       </section>
-
-      {ocrFeedback ? (
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="border-b border-slate-100 pb-4">
-            <h2 className="text-lg font-semibold text-slate-950">OCR Engine Feedback</h2>
-            <p className="mt-1 text-sm text-slate-600">Quality feedback dari OCR engine untuk mendukung confidence, readability, dan usability review.</p>
-          </div>
-          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            {Object.entries(ocrFeedback)
-              .filter(([key]) => !["provider", "model", "model_name", "provider_name"].includes(key.toLowerCase()))
-              .map(([key, value]) => {
-                const isLongValue = typeof value === "string" && value.length > 90;
-                const isComplexValue = typeof value === "object" && value !== null;
-
-                return (
-                  <div key={key} className={`rounded-lg border border-slate-200 bg-slate-50 p-3 ${isLongValue || isComplexValue ? "md:col-span-2 xl:col-span-4" : ""}`}>
-                    <p className="text-xs font-medium text-slate-500">{formatFeedbackLabel(key)}</p>
-                    {isComplexValue ? (
-                      <pre className="mt-2 max-h-72 overflow-auto rounded-md border border-slate-200 bg-white p-3 text-xs leading-5 text-slate-700">
-                        {JSON.stringify(value, null, 2)}
-                      </pre>
-                    ) : (
-                      <p className="mt-1 whitespace-pre-wrap break-words text-sm font-semibold text-slate-950">{displayValue(value)}</p>
-                    )}
-                  </div>
-                );
-              })}
-          </div>
-        </section>
-      ) : null}
 
       <section className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
         <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -323,34 +271,13 @@ export default async function OcrResultDetailPage({
         </div>
       </section>
 
-      <section className="grid gap-5 xl:grid-cols-2 xl:items-start">
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm xl:sticky xl:top-4">
-          <div className="mb-4 flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="text-lg font-semibold text-slate-950">Source PDF</h2>
-              <p className="mt-1 text-sm text-slate-600">Dokumen asli untuk dibandingkan dengan hasil OCR.</p>
-            </div>
-            <a href={job.pdfUrl} target="_blank" rel="noreferrer" className="rounded-md border border-slate-300 px-3 py-2 text-center text-xs font-semibold text-slate-800 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-200">
-              Open PDF
-            </a>
-          </div>
-          <iframe title={`PDF preview for ${job.filename}`} src={job.pdfUrl} className="h-screen w-full rounded-lg border border-slate-200 bg-slate-50" />
-        </div>
-
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="mb-5 border-b border-slate-100 pb-4">
-            <h2 className="text-lg font-semibold text-slate-950">Extracted OCR Fields</h2>
-            <p className="mt-1 text-sm text-slate-600">Jika OCR engine mengirim struktur per halaman, informasi akan otomatis digroup sebagai Page 1, Page 2, dan seterusnya.</p>
-          </div>
-          {result ? (
-            <ResultFormRenderer data={result} />
-          ) : (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-              OCR result belum tersedia untuk job ini.
-            </div>
-          )}
-        </div>
-      </section>
+      {result ? (
+        <OcrPageReviewPanel data={result} pdfUrl={job.pdfUrl} filename={job.filename} />
+      ) : (
+        <section className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">
+          OCR result belum tersedia untuk job ini.
+        </section>
+      )}
     </div>
   );
 }

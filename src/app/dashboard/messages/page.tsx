@@ -1,4 +1,6 @@
 import { Prisma } from "@prisma/client";
+import { MailAutoSync } from "@/components/mail-auto-sync";
+import { OcrAutoRefresh } from "@/components/ocr-auto-refresh";
 import { prisma } from "@/lib/prisma";
 import { triggerPendingOcrMessagesAction } from "./actions";
 import { MessagesTable, type MessageSortKey, type MessageTableRow } from "./messages-table";
@@ -23,7 +25,9 @@ interface MessageListData {
   pageSize: number;
   totalStoredMessages: number;
   pendingOcr: number;
+  processingOcr: number;
   withAttachment: number;
+  connectedConnectionIds: string[];
   error?: string;
 }
 
@@ -113,7 +117,7 @@ async function getMessages(params: MessagesSearchParams): Promise<MessageListDat
   const where = buildWhere(params);
 
   try {
-    const [messages, totalItems, totalStoredMessages, pendingOcr, withAttachment] = await Promise.all([
+    const [messages, totalItems, totalStoredMessages, pendingOcr, processingOcr, withAttachment, connectedConnections] = await Promise.all([
       prisma.emailMessage.findMany({
         where,
         orderBy: buildOrderBy(sort, direction),
@@ -134,7 +138,12 @@ async function getMessages(params: MessagesSearchParams): Promise<MessageListDat
       prisma.emailMessage.count({ where }),
       prisma.emailMessage.count(),
       prisma.emailMessage.count({ where: { ocr: false } }),
+      prisma.emailMessage.count({ where: { ocrStatus: "PROCESSING" } }),
       prisma.emailMessage.count({ where: { hasAttachments: true } }),
+      prisma.mailServerConnection.findMany({
+        where: { status: "CONNECTED" },
+        select: { id: true },
+      }),
     ]);
     const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
 
@@ -162,7 +171,9 @@ async function getMessages(params: MessagesSearchParams): Promise<MessageListDat
       pageSize,
       totalStoredMessages,
       pendingOcr,
+      processingOcr,
       withAttachment,
+      connectedConnectionIds: connectedConnections.map((connection) => connection.id),
     };
   } catch {
     return {
@@ -173,7 +184,9 @@ async function getMessages(params: MessagesSearchParams): Promise<MessageListDat
       pageSize,
       totalStoredMessages: 0,
       pendingOcr: 0,
+      processingOcr: 0,
       withAttachment: 0,
+      connectedConnectionIds: [],
       error: "Database belum siap. Message list akan muncul setelah Supabase dan Prisma migration aktif.",
     };
   }
@@ -191,6 +204,7 @@ export default async function MessagesPage({
 
   return (
     <div className="flex flex-col gap-8">
+      <OcrAutoRefresh enabled={data.processingOcr > 0} />
       <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <p className="text-sm font-semibold uppercase tracking-[0.18em] text-sky-800">Messages</p>
@@ -199,11 +213,14 @@ export default async function MessagesPage({
             Pesan yang ditemukan dari mail server disimpan di sini. Table ini memakai standar search, filter, sort, dan pagination untuk semua list data berikutnya.
           </p>
         </div>
-        <form action={triggerPendingOcrMessagesAction}>
-          <button type="submit" className="h-11 rounded-md bg-sky-800 px-4 text-sm font-semibold text-white transition hover:bg-sky-900 focus:outline-none focus:ring-2 focus:ring-sky-200">
-            Trigger pending OCR
-          </button>
-        </form>
+        <div className="flex flex-wrap gap-2">
+          <MailAutoSync connectionIds={data.connectedConnectionIds} />
+          <form action={triggerPendingOcrMessagesAction}>
+            <button type="submit" className="h-11 rounded-md bg-sky-800 px-4 text-sm font-semibold text-white transition hover:bg-sky-900 focus:outline-none focus:ring-2 focus:ring-sky-200">
+              Trigger pending OCR
+            </button>
+          </form>
+        </div>
       </header>
 
       {data.error ? (

@@ -24,6 +24,7 @@ model IntegrationConfiguration {
   provider    String   @unique
   apiKey      String
   endpoint    String
+  ocrModelId  String?
   enabled     Boolean  @default(true)
   lastTestAt  DateTime?
   lastError   String?

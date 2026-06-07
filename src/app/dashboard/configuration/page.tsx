@@ -1,6 +1,7 @@
 import { KeyRound, ShieldCheck } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { SNAPTEXT_DEFAULT_ENDPOINT, SNAPTEXT_PROVIDER } from "@/lib/snaptext";
+import { normalizeSnaptextOcrModelId, type SnaptextOcrModelId } from "@/lib/validations/snaptext-configuration";
 import { ConfigurationForm } from "./configuration-form";
 
 export const dynamic = "force-dynamic";
@@ -9,6 +10,7 @@ async function getSnaptextConfig(): Promise<{
   endpoint: string;
   enabled: boolean;
   hasApiKey: boolean;
+  ocrModelId: SnaptextOcrModelId | null;
   error?: string;
 }> {
   try {
@@ -20,12 +22,14 @@ async function getSnaptextConfig(): Promise<{
       endpoint: config?.endpoint ?? SNAPTEXT_DEFAULT_ENDPOINT,
       enabled: config?.enabled ?? false,
       hasApiKey: Boolean(config?.apiKey),
+      ocrModelId: normalizeSnaptextOcrModelId(config?.ocrModelId),
     };
   } catch {
     return {
       endpoint: SNAPTEXT_DEFAULT_ENDPOINT,
       enabled: false,
       hasApiKey: false,
+      ocrModelId: null,
       error: "Database belum siap. Jalankan migration sebelum menyimpan konfigurasi.",
     };
   }
@@ -64,7 +68,7 @@ export default async function ConfigurationPage(): Promise<React.JSX.Element> {
         </article>
       </section>
 
-      <ConfigurationForm endpoint={config.endpoint} enabled={config.enabled} hasApiKey={config.hasApiKey} />
+      <ConfigurationForm endpoint={config.endpoint} enabled={config.enabled} hasApiKey={config.hasApiKey} ocrModelId={config.ocrModelId} />
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-lg font-semibold text-slate-950">OCR job API</h2>
@@ -82,6 +86,16 @@ Content-Type: application/json
   "fileSize": 120000,
   "fileHash": "sha256-file-hash",
   "emailMessageId": "optional-message-id"
+}
+
+Payload sent to Snaptext:
+{
+  "pdfUrl": "https://.../document.pdf",
+  "filename": "document.pdf",
+  "fileSize": 120000,
+  "fileHash": "sha256-file-hash",
+  "ocrModelId": ${JSON.stringify(config.ocrModelId)},
+  "jsonSchema": "Takaful extraction schema"
 }`}
         </pre>
       </section>

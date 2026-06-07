@@ -3,21 +3,8 @@ import { apiError, validateBearerToken } from "@/lib/api-auth";
 import { writeEmailGatewayLog } from "@/lib/email-gateway-log";
 import { normalizeSnaptextResult } from "@/lib/ocr-schema";
 import { prisma } from "@/lib/prisma";
+import { extractSnaptextResult, mapProviderStatus } from "@/lib/snaptext";
 import { snaptextWebhookResultSchema } from "@/lib/validations/ocr-result";
-
-function mapStatus(status: string): "PROCESSING" | "COMPLETED" | "FAILED" {
-  const normalized = status.toLowerCase();
-
-  if (["completed", "complete", "success", "succeeded", "done"].includes(normalized)) {
-    return "COMPLETED";
-  }
-
-  if (["failed", "error", "rejected"].includes(normalized)) {
-    return "FAILED";
-  }
-
-  return "PROCESSING";
-}
 
 function getProviderJobId(input: {
   id?: string;
@@ -41,9 +28,10 @@ export async function POST(request: Request): Promise<Response> {
 
   const providerJobId = getProviderJobId(parsed.data);
   const middlewareJobId = parsed.data.middlewareJobId ?? parsed.data.metadata?.middlewareJobId;
-  const status = mapStatus(parsed.data.status);
-  const rawResult = parsed.data.result ?? parsed.data.data ?? parsed.data.output ?? parsed.data.extraction ?? parsed.data;
-  const normalizedResult = normalizeSnaptextResult(rawResult);
+  const rawResult = extractSnaptextResult(parsed.data);
+  const status = mapProviderStatus(parsed.data.status, rawResult);
+  const normalizedResult = rawResult === null ? null : normalizeSnaptextResult(rawResult);
+  const hasResult = normalizedResult !== null && normalizedResult !== undefined;
 
   const existingJob = middlewareJobId
     ? await prisma.ocrJob.findUnique({ where: { id: middlewareJobId } })
@@ -68,8 +56,7 @@ export async function POST(request: Request): Promise<Response> {
       providerStatus: parsed.data.status,
       status,
       response: parsed.data as InputJsonValue,
-      result: normalizedResult as InputJsonValue,
-      resultReceivedAt: new Date(),
+      ...(hasResult ? { result: normalizedResult as InputJsonValue, resultReceivedAt: new Date() } : {}),
     },
   });
 

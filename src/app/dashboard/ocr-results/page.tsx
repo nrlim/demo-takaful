@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { FileSearch } from "lucide-react";
+import { OcrAutoRefresh } from "@/components/ocr-auto-refresh";
+import { OcrProgressBar } from "@/components/ocr-progress-bar";
 import { prisma } from "@/lib/prisma";
 import { refreshSnaptextResultsAction } from "./actions";
 
@@ -43,9 +45,11 @@ export default async function OcrResultsPage(): Promise<React.JSX.Element> {
     }).catch(() => [])
     : [];
   const messageById = new Map(messages.map((message) => [message.id, message]));
+  const hasProcessingJobs = jobs.some((job) => job.status === "PROCESSING" || job.status === "PENDING");
 
   return (
     <div className="flex flex-col gap-8">
+      <OcrAutoRefresh enabled={hasProcessingJobs} />
       <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <p className="text-sm font-semibold uppercase tracking-[0.18em] text-sky-800">OCR Results</p>
@@ -95,6 +99,9 @@ export default async function OcrResultsPage(): Promise<React.JSX.Element> {
                     <span className={`rounded-md border px-2.5 py-1 text-center text-xs font-semibold ${statusClass(job.status)}`}>
                       {job.status}
                     </span>
+                    {job.status === "PROCESSING" ? (
+                      <OcrProgressBar label="Processing OCR" />
+                    ) : null}
                     {job.result ? (
                       <Link
                         href={`/dashboard/ocr-results/${job.id}`}

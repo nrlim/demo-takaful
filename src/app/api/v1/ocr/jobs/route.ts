@@ -3,7 +3,7 @@ import { apiError, validateBearerToken } from "@/lib/api-auth";
 import { logger } from "@/lib/logger";
 import { normalizeSnaptextResult } from "@/lib/ocr-schema";
 import { prisma } from "@/lib/prisma";
-import { createSnaptextOcrJob, mapProviderStatus, SNAPTEXT_PROVIDER } from "@/lib/snaptext";
+import { createSnaptextOcrJob, extractSnaptextResult, getSnaptextProviderJobId, mapProviderStatus, SNAPTEXT_PROVIDER } from "@/lib/snaptext";
 import { snaptextOcrJobSchema } from "@/lib/validations/ocr-job";
 
 export async function POST(request: Request): Promise<Response> {
@@ -32,14 +32,11 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     const snaptextJob = await createSnaptextOcrJob({ ...parsed.data, ocrJobId: createdJob.id });
-    const mappedStatus = mapProviderStatus(snaptextJob.status);
-    const providerJobId = typeof snaptextJob.id === "string"
-      ? snaptextJob.id
-      : typeof snaptextJob.jobId === "string"
-        ? snaptextJob.jobId
-        : undefined;
-
-    const normalizedResult = normalizeSnaptextResult(snaptextJob);
+    const rawResult = extractSnaptextResult(snaptextJob);
+    const mappedStatus = mapProviderStatus(snaptextJob.status, rawResult);
+    const providerJobId = getSnaptextProviderJobId(snaptextJob);
+    const normalizedResult = rawResult === null ? null : normalizeSnaptextResult(rawResult);
+    const hasResult = normalizedResult !== null && normalizedResult !== undefined;
     const updatedJob = await prisma.ocrJob.update({
       where: { id: createdJob.id },
       data: {
@@ -47,8 +44,7 @@ export async function POST(request: Request): Promise<Response> {
         providerStatus: snaptextJob.status,
         status: mappedStatus,
         response: snaptextJob as InputJsonValue,
-        result: normalizedResult as InputJsonValue,
-        resultReceivedAt: new Date(),
+        ...(hasResult ? { result: normalizedResult as InputJsonValue, resultReceivedAt: new Date() } : {}),
       },
     });
 

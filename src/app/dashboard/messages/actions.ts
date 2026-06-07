@@ -6,7 +6,7 @@ import { writeEmailGatewayLog } from "@/lib/email-gateway-log";
 import { isAuthenticated } from "@/lib/auth";
 import { normalizeSnaptextResult } from "@/lib/ocr-schema";
 import { prisma } from "@/lib/prisma";
-import { createSnaptextOcrJob, mapProviderStatus, SNAPTEXT_PROVIDER } from "@/lib/snaptext";
+import { createSnaptextOcrJob, extractSnaptextResult, getSnaptextProviderJobId, mapProviderStatus, SNAPTEXT_PROVIDER } from "@/lib/snaptext";
 
 export async function triggerPendingOcrMessagesAction(): Promise<void> {
   if (!(await isAuthenticated())) {
@@ -65,13 +65,11 @@ export async function triggerPendingOcrMessagesAction(): Promise<void> {
           emailMessageId: message.id,
           ocrJobId: ocrJob.id,
         });
-        const mappedStatus = mapProviderStatus(providerJob.status);
-        const normalizedResult = normalizeSnaptextResult(providerJob);
-        const providerJobId = typeof providerJob.id === "string"
-          ? providerJob.id
-          : typeof providerJob.jobId === "string"
-            ? providerJob.jobId
-            : undefined;
+        const rawResult = extractSnaptextResult(providerJob);
+        const mappedStatus = mapProviderStatus(providerJob.status, rawResult);
+        const normalizedResult = rawResult === null ? null : normalizeSnaptextResult(rawResult);
+        const hasResult = normalizedResult !== null && normalizedResult !== undefined;
+        const providerJobId = getSnaptextProviderJobId(providerJob);
 
         await prisma.ocrJob.update({
           where: { id: ocrJob.id },
@@ -80,8 +78,7 @@ export async function triggerPendingOcrMessagesAction(): Promise<void> {
             providerStatus: providerJob.status,
             status: mappedStatus,
             response: providerJob as InputJsonValue,
-            result: normalizedResult as InputJsonValue,
-            resultReceivedAt: normalizedResult ? new Date() : null,
+            ...(hasResult ? { result: normalizedResult as InputJsonValue, resultReceivedAt: new Date() } : {}),
           },
         });
         await prisma.emailMessage.update({

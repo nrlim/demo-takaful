@@ -1,17 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { z } from "zod";
 import { isAuthenticated } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { encryptSecret } from "@/lib/secret-crypto";
 import { SNAPTEXT_DEFAULT_ENDPOINT, SNAPTEXT_PROVIDER } from "@/lib/snaptext";
-
-const snaptextConfigurationSchema = z.object({
-  apiKey: z.string().trim().optional(),
-  endpoint: z.url().default(SNAPTEXT_DEFAULT_ENDPOINT),
-  enabled: z.enum(["true", "false"]).transform((value) => value === "true"),
-});
+import { snaptextConfigurationSchema } from "@/lib/validations/snaptext-configuration";
 
 export interface ConfigurationActionState {
   message?: string;
@@ -30,6 +24,7 @@ export async function saveSnaptextConfigurationAction(
     apiKey: formData.get("apiKey"),
     endpoint: formData.get("endpoint") || SNAPTEXT_DEFAULT_ENDPOINT,
     enabled: formData.get("enabled") ?? "false",
+    ocrModelId: formData.get("ocrModelId") ?? "",
   });
 
   if (!parsed.success) {
@@ -51,6 +46,7 @@ export async function saveSnaptextConfigurationAction(
       ...(apiKey ? { apiKey: encryptSecret(apiKey) } : {}),
       endpoint: parsed.data.endpoint,
       enabled: parsed.data.enabled,
+      ocrModelId: parsed.data.ocrModelId,
       lastError: null,
     },
     create: {
@@ -58,6 +54,7 @@ export async function saveSnaptextConfigurationAction(
       apiKey: encryptSecret(apiKey ?? ""),
       endpoint: parsed.data.endpoint,
       enabled: parsed.data.enabled,
+      ocrModelId: parsed.data.ocrModelId,
     },
   });
 

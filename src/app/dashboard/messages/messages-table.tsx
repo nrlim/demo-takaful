@@ -1,6 +1,7 @@
 "use client";
 
 import { FileText, Inbox } from "lucide-react";
+import { OcrProgressBar } from "@/components/ocr-progress-bar";
 import { StandardDataTable, type DataTableColumn, type SortDirection } from "@/components/standard-data-table";
 
 export type MessageSortKey = "receivedAt" | "subject" | "fromEmail" | "ocrStatus" | "attachmentCount";
@@ -133,7 +134,13 @@ export function MessagesTable({
           <span className={`inline-flex rounded-md border px-2.5 py-1 text-xs font-semibold ${getOcrBadgeClass(message)}`}>
             OCR {message.ocr ? "true" : "false"}
           </span>
-          <p className="mt-2 text-xs text-slate-500">{message.ocrStatus}</p>
+          {message.ocrStatus === "PROCESSING" ? (
+            <div className="mt-3 max-w-48">
+              <OcrProgressBar label="Processing" />
+            </div>
+          ) : (
+            <p className="mt-2 text-xs text-slate-500">{message.ocrStatus}</p>
+          )}
           {message.matchedCategory ? (
             <p className="mt-1 text-xs font-medium text-slate-700">{message.matchedCategory}</p>
           ) : null}

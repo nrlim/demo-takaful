@@ -6,7 +6,7 @@ import { isAuthenticated } from "@/lib/auth";
 import { writeEmailGatewayLog } from "@/lib/email-gateway-log";
 import { normalizeSnaptextResult } from "@/lib/ocr-schema";
 import { prisma } from "@/lib/prisma";
-import { fetchSnaptextOcrJobResult, mapProviderStatus } from "@/lib/snaptext";
+import { extractSnaptextResult, fetchSnaptextOcrJobResult, getSnaptextProviderJobId, mapProviderStatus } from "@/lib/snaptext";
 
 export async function refreshSnaptextResultsAction(): Promise<void> {
   if (!(await isAuthenticated())) {
@@ -29,18 +29,20 @@ export async function refreshSnaptextResultsAction(): Promise<void> {
 
     try {
       const providerJob = await fetchSnaptextOcrJobResult(job.providerJobId);
-      const mappedStatus = mapProviderStatus(providerJob.status);
-      const normalizedResult = normalizeSnaptextResult(providerJob);
+      const rawResult = extractSnaptextResult(providerJob);
+      const mappedStatus = mapProviderStatus(providerJob.status, rawResult);
+      const normalizedResult = rawResult === null ? null : normalizeSnaptextResult(rawResult);
       const hasResult = normalizedResult !== null && normalizedResult !== undefined;
+      const providerJobId = getSnaptextProviderJobId(providerJob) ?? job.providerJobId;
 
       await prisma.ocrJob.update({
         where: { id: job.id },
         data: {
+          providerJobId,
           providerStatus: providerJob.status,
           status: mappedStatus,
           response: providerJob as InputJsonValue,
-          ...(hasResult ? { result: normalizedResult as InputJsonValue } : {}),
-          ...(mappedStatus === "COMPLETED" || hasResult ? { resultReceivedAt: new Date() } : {}),
+          ...(hasResult ? { result: normalizedResult as InputJsonValue, resultReceivedAt: new Date() } : {}),
         },
       });
 
@@ -63,7 +65,7 @@ export async function refreshSnaptextResultsAction(): Promise<void> {
         level: "OK",
         event: "OCR_RESULT_REFRESHED",
         message: "OCR job result refreshed from engine API.",
-        metadata: { ocrJobId: job.id, providerJobId: job.providerJobId, status: mappedStatus },
+        metadata: { ocrJobId: job.id, providerJobId, status: mappedStatus },
       });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message.slice(0, 500) : "OCR result refresh failed.";

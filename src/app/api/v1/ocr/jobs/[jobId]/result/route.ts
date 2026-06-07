@@ -2,21 +2,8 @@ import type { InputJsonValue } from "@prisma/client/runtime/client";
 import { apiError, validateBearerToken } from "@/lib/api-auth";
 import { normalizeSnaptextResult } from "@/lib/ocr-schema";
 import { prisma } from "@/lib/prisma";
+import { extractSnaptextResult, mapProviderStatus } from "@/lib/snaptext";
 import { snaptextWebhookResultSchema } from "@/lib/validations/ocr-result";
-
-function mapStatus(status: string): "PROCESSING" | "COMPLETED" | "FAILED" {
-  const normalized = status.toLowerCase();
-
-  if (["completed", "complete", "success", "succeeded", "done"].includes(normalized)) {
-    return "COMPLETED";
-  }
-
-  if (["failed", "error", "rejected"].includes(normalized)) {
-    return "FAILED";
-  }
-
-  return "PROCESSING";
-}
 
 export async function POST(
   request: Request,
@@ -35,9 +22,10 @@ export async function POST(
   }
 
   const providerJobId = parsed.data.providerJobId ?? parsed.data.jobId ?? parsed.data.id;
-  const status = mapStatus(parsed.data.status);
-  const rawResult = parsed.data.result ?? parsed.data.data ?? parsed.data.output ?? parsed.data.extraction ?? parsed.data;
-  const normalizedResult = normalizeSnaptextResult(rawResult);
+  const rawResult = extractSnaptextResult(parsed.data);
+  const status = mapProviderStatus(parsed.data.status, rawResult);
+  const normalizedResult = rawResult === null ? null : normalizeSnaptextResult(rawResult);
+  const hasResult = normalizedResult !== null && normalizedResult !== undefined;
   const job = await prisma.ocrJob.update({
     where: { id: jobId },
     data: {
@@ -45,8 +33,7 @@ export async function POST(
       providerStatus: parsed.data.status,
       status,
       response: parsed.data as InputJsonValue,
-      result: normalizedResult as InputJsonValue,
-      resultReceivedAt: new Date(),
+      ...(hasResult ? { result: normalizedResult as InputJsonValue, resultReceivedAt: new Date() } : {}),
     },
   }).catch(() => null);
 

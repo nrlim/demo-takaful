@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Database, Inbox, RefreshCw, Pencil, Server, TerminalSquare, Unplug } from "lucide-react";
+import { MailAutoSync } from "@/components/mail-auto-sync";
 import { prisma } from "@/lib/prisma";
 import { disconnectMailServerAction, syncMailMessagesAction } from "./actions";
 import { LogsAutoRefresh } from "./logs-auto-refresh";
@@ -97,6 +98,9 @@ async function getConnections(): Promise<{
 
 export default async function MailServerPage(): Promise<React.JSX.Element> {
   const { connections, logs, error } = await getConnections();
+  const connectedConnectionIds = connections
+    .filter((connection) => connection.status === "CONNECTED")
+    .map((connection) => connection.id);
 
   return (
     <div className="flex flex-col gap-8">
@@ -123,9 +127,12 @@ export default async function MailServerPage(): Promise<React.JSX.Element> {
       <MailServerForm />
 
       <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-200 p-5">
-          <h2 className="text-lg font-semibold text-slate-950">Saved connections</h2>
-          <p className="mt-1 text-sm leading-6 text-slate-600">Gunakan Sync inbox untuk mengambil pesan unseen terbaru dari mail server.</p>
+        <div className="flex flex-col gap-3 border-b border-slate-200 p-5 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-950">Saved connections</h2>
+            <p className="mt-1 text-sm leading-6 text-slate-600">Auto sync mengambil pesan baru secara berkala. Sync inbox tetap tersedia untuk trigger manual.</p>
+          </div>
+          <MailAutoSync connectionIds={connectedConnectionIds} />
         </div>
 
         <div className="divide-y divide-slate-100">
