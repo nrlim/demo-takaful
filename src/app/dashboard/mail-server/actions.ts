@@ -95,6 +95,57 @@ function matchMessageToRule(
   return null;
 }
 
+async function persistEmailAttachments(input: {
+  connectionId: string;
+  emailMessageId: string;
+  messageUid: number;
+  sourceMailbox: string;
+  attachments: StoredPdfAttachment[];
+}): Promise<void> {
+  let storedCount = 0;
+
+  for (const attachment of input.attachments) {
+    await prisma.emailAttachment.upsert({
+      where: {
+        emailMessageId_fileHash: {
+          emailMessageId: input.emailMessageId,
+          fileHash: attachment.fileHash,
+        },
+      },
+      update: {
+        filename: attachment.filename,
+        contentType: attachment.contentType,
+        fileSize: attachment.fileSize,
+        storagePath: attachment.storagePath,
+        publicUrl: attachment.publicUrl,
+      },
+      create: {
+        emailMessageId: input.emailMessageId,
+        filename: attachment.filename,
+        contentType: attachment.contentType,
+        fileSize: attachment.fileSize,
+        fileHash: attachment.fileHash,
+        storagePath: attachment.storagePath,
+        publicUrl: attachment.publicUrl,
+      },
+    });
+    storedCount += 1;
+  }
+
+  await writeEmailGatewayLog({
+    connectionId: input.connectionId,
+    level: "STORE",
+    event: "ATTACHMENTS_STORED",
+    message: `${storedCount} attachment record(s) upserted for email message.`,
+    metadata: {
+      emailMessageId: input.emailMessageId,
+      uid: input.messageUid,
+      mailbox: input.sourceMailbox,
+      fileHashes: input.attachments.map((attachment) => attachment.fileHash),
+    },
+  });
+}
+
 async function triggerOcrForStoredAttachments(input: {
   connectionId: string;
   emailMessageId: string;
@@ -477,7 +528,7 @@ export async function syncMailMessagesAction(formData: FormData): Promise<void> 
       message: `${activeRecipientRules.length} active catch rule(s) loaded.`,
       metadata: { activeRules: activeRecipientRules.length },
     });
-    const matchedMessages = newMessages
+    const matchedMessages = messages
       .map((message) => ({ message, match: matchMessageToRule(message, activeRecipientRules) }))
       .filter((item): item is { message: typeof messages[number]; match: RuleMatchResult } => Boolean(item.match));
     await writeEmailGatewayLog({
@@ -485,7 +536,7 @@ export async function syncMailMessagesAction(formData: FormData): Promise<void> 
       level: matchedMessages.length > 0 ? "MATCH" : "WARN",
       event: "MESSAGES_MATCHED",
       message: `${matchedMessages.length} message(s) matched recipient/content/attachment rules.`,
-      metadata: { matched: matchedMessages.length, fetched: messages.length, newMessages: newMessages.length, checkedRecipients: newMessages.flatMap((message) => message.recipientEmails).slice(0, 20) },
+      metadata: { matched: matchedMessages.length, fetched: messages.length, newMessages: newMessages.length, checkedRecipients: messages.flatMap((message) => message.recipientEmails).slice(0, 20) },
     });
 
     const storedMatches: Array<{
@@ -506,18 +557,36 @@ export async function syncMailMessagesAction(formData: FormData): Promise<void> 
         select: { id: true },
       });
 
+      const attachments: StoredPdfAttachment[] = [];
+
       if (alreadyStored) {
+        for (const attachment of item.message.pdfAttachments) {
+          attachments.push(await uploadPdfAttachment({
+            messageUid: item.message.uid,
+            filename: attachment.filename,
+            contentType: attachment.contentType,
+            content: attachment.content,
+            connectionId: connection.id,
+            sourceMailbox: item.message.sourceMailbox,
+          }));
+        }
+
+        await persistEmailAttachments({
+          connectionId: connection.id,
+          emailMessageId: alreadyStored.id,
+          messageUid: item.message.uid,
+          sourceMailbox: item.message.sourceMailbox,
+          attachments,
+        });
         await writeEmailGatewayLog({
           connectionId: connection.id,
           level: "OK",
           event: "MESSAGE_ALREADY_STORED",
-          message: "Matched email skipped because it already exists in OCR queue.",
-          metadata: { uid: item.message.uid, mailbox: item.message.sourceMailbox },
+          message: "Matched email already exists; attachment records were checked and backfilled if missing.",
+          metadata: { uid: item.message.uid, mailbox: item.message.sourceMailbox, attachmentCount: attachments.length },
         });
         continue;
       }
-
-      const attachments: StoredPdfAttachment[] = [];
 
       for (const attachment of item.message.pdfAttachments) {
         attachments.push(await uploadPdfAttachment({
@@ -525,6 +594,8 @@ export async function syncMailMessagesAction(formData: FormData): Promise<void> 
           filename: attachment.filename,
           contentType: attachment.contentType,
           content: attachment.content,
+          connectionId: connection.id,
+          sourceMailbox: item.message.sourceMailbox,
         }));
       }
 
@@ -593,17 +664,12 @@ export async function syncMailMessagesAction(formData: FormData): Promise<void> 
         },
       });
 
-      await prisma.emailAttachment.createMany({
-        data: attachments.map((attachment) => ({
-          emailMessageId: savedMessage.id,
-          filename: attachment.filename,
-          contentType: attachment.contentType,
-          fileSize: attachment.fileSize,
-          fileHash: attachment.fileHash,
-          storagePath: attachment.storagePath,
-          publicUrl: attachment.publicUrl,
-        })),
-        skipDuplicates: true,
+      await persistEmailAttachments({
+        connectionId: connection.id,
+        emailMessageId: savedMessage.id,
+        messageUid: message.uid,
+        sourceMailbox: message.sourceMailbox,
+        attachments,
       });
       await writeEmailGatewayLog({
         connectionId: connection.id,

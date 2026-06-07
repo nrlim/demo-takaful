@@ -6,6 +6,8 @@ export interface PdfAttachmentUploadInput {
   filename: string;
   contentType: string;
   content: Buffer;
+  connectionId?: string;
+  sourceMailbox?: string;
 }
 
 export interface StoredPdfAttachment {
@@ -60,7 +62,9 @@ export async function uploadPdfAttachment(
 
   const fileHash = createFileHash(input.content);
   const safeFilename = sanitizeFilename(input.filename);
-  const storagePath = `mail-attachments/${input.messageUid}/${fileHash}-${safeFilename}`;
+  const safeConnectionId = input.connectionId ? sanitizeFilename(input.connectionId) : "unknown-connection";
+  const safeMailbox = input.sourceMailbox ? sanitizeFilename(input.sourceMailbox) : "unknown-mailbox";
+  const storagePath = `mail-attachments/${safeConnectionId}/${safeMailbox}/${input.messageUid}/${fileHash}-${safeFilename}`;
 
   const { error } = await supabase.storage
     .from(config.bucket)
