@@ -95,7 +95,8 @@ Payload sent to Snaptext:
   "fileSize": 120000,
   "fileHash": "sha256-file-hash",
   "ocrModelId": ${JSON.stringify(config.ocrModelId)},
-  "jsonSchema": "Takaful extraction schema"
+  "callbackUrl": "https://.../api/v1/ocr/jobs/<job-id>/result",
+  "webhookUrl": "https://.../api/v1/ocr/jobs/<job-id>/result"
 }`}
         </pre>
       </section>

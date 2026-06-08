@@ -236,7 +236,7 @@ export function RecipientCatchManager({ rules }: RecipientCatchManagerProps): Re
               </div>
 
               <div className="rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm leading-6 text-indigo-900">
-                Rule akan match secara bertingkat: recipient, attachment requirement, subject, content, lalu filename attachment.
+                Rule akan match secara bertingkat: recipient, attachment requirement, lalu keyword subject, content, dan filename attachment dengan pola contains, bukan exact match.
               </div>
 
               <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">

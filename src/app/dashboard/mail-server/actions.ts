@@ -52,13 +52,31 @@ async function writeVerboseEmailGatewayLog(
   await writeEmailGatewayLog(input);
 }
 
+function normalizeRuleText(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeRuleKeywords(keywords: string[]): string[] {
+  return keywords
+    .flatMap((keyword) => keyword.split(/[\n,]/))
+    .map(normalizeRuleText)
+    .filter((keyword) => keyword.length > 0);
+}
+
 function includesAnyKeyword(value: string, keywords: string[]): boolean {
-  if (keywords.length === 0) {
+  const normalizedKeywords = normalizeRuleKeywords(keywords);
+  if (normalizedKeywords.length === 0) {
     return true;
   }
 
-  const normalizedValue = value.toLowerCase();
-  return keywords.some((keyword) => normalizedValue.includes(keyword.toLowerCase()));
+  const normalizedValue = normalizeRuleText(value);
+  return normalizedKeywords.some((keyword) => normalizedValue.includes(keyword));
 }
 
 function matchMessageToRule(
@@ -99,7 +117,7 @@ function matchMessageToRule(
     const reasons = ["recipient"];
     if (subjectMatched) reasons.push("subject");
     if (bodyMatched) reasons.push("content");
-    if (rule.attachmentKeywords.length > 0) reasons.push("attachment name");
+    if (rule.attachmentKeywords.length > 0) reasons.push("attachment filename");
     reasons.push("pdf attachment");
     if (rule.requireAttachment) reasons.push("has attachment");
 

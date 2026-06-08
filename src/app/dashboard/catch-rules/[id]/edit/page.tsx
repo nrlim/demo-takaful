@@ -77,6 +77,9 @@ export default async function EditCatchRulePage({
             <textarea id="attachmentKeywords" name="attachmentKeywords" rows={4} defaultValue={rule.attachmentKeywords.join(", ")} className="rounded-md border border-slate-300 px-3 py-2 outline-none focus:border-sky-700 focus:ring-2 focus:ring-sky-100" />
           </div>
         </div>
+        <p className="rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm leading-6 text-indigo-900">
+          Keyword subject, content, dan filename attachment diproses sebagai contains match, bukan exact match.
+        </p>
         <div className="flex gap-3">
           <button type="submit" className="h-11 rounded-md bg-sky-800 px-4 text-sm font-semibold text-white transition hover:bg-sky-900 focus:outline-none focus:ring-2 focus:ring-sky-200">
             Save rule

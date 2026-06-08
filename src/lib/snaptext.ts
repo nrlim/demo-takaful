@@ -1,4 +1,3 @@
-import { takafulApplicationOcrSchema } from "@/lib/ocr-schema";
 import { prisma } from "@/lib/prisma";
 import { decryptSecret } from "@/lib/secret-crypto";
 import { SNAPTEXT_DEFAULT_ENDPOINT, SNAPTEXT_PROVIDER } from "@/lib/snaptext-constants";
@@ -109,7 +108,6 @@ export async function createSnaptextOcrJob(
       fileSize: input.fileSize,
       fileHash: input.fileHash,
       ocrModelId: config.ocrModelId,
-      jsonSchema: takafulApplicationOcrSchema,
       callbackUrl: buildCallbackUrl(input.ocrJobId),
       webhookUrl: buildCallbackUrl(input.ocrJobId),
       callbackHeaders: buildCallbackHeaders(),
