@@ -1,20 +1,23 @@
 "use client";
 
-import { useEffect, useTransition } from "react";
+import { useEffect, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { refreshSnaptextResultsAction } from "@/app/dashboard/ocr-results/actions";
 
 interface OcrAutoRefreshProps {
   enabled: boolean;
   intervalMs?: number;
+  initialDelayMs?: number;
 }
 
 export function OcrAutoRefresh({
   enabled,
-  intervalMs = 5000,
+  intervalMs = 10000,
+  initialDelayMs = 2500,
 }: OcrAutoRefreshProps): React.JSX.Element | null {
   const router = useRouter();
   const [, startTransition] = useTransition();
+  const isRunningRef = useRef(false);
 
   useEffect(() => {
     if (!enabled) {
@@ -22,17 +25,29 @@ export function OcrAutoRefresh({
     }
 
     const refresh = (): void => {
+      if (isRunningRef.current || document.hidden) {
+        return;
+      }
+
+      isRunningRef.current = true;
       startTransition(async () => {
-        await refreshSnaptextResultsAction();
-        router.refresh();
+        try {
+          await refreshSnaptextResultsAction();
+          router.refresh();
+        } finally {
+          isRunningRef.current = false;
+        }
       });
     };
 
-    refresh();
+    const timeout = window.setTimeout(refresh, initialDelayMs);
     const interval = window.setInterval(refresh, intervalMs);
 
-    return () => window.clearInterval(interval);
-  }, [enabled, intervalMs, router]);
+    return () => {
+      window.clearTimeout(timeout);
+      window.clearInterval(interval);
+    };
+  }, [enabled, initialDelayMs, intervalMs, router]);
 
   return null;
 }
